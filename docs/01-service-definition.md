@@ -1,6 +1,6 @@
 # 01. 서비스 정의
 
-![홈페이지 시안 01](./homepage-draft-01.png)
+![홈페이지 시안 01](./img/homepage-draft-01.png)
 
 ## 한 줄 정의
 
