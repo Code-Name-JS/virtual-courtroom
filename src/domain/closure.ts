@@ -41,7 +41,15 @@ export function canExecuteClosure(status: CaseStatus, scheduledAt: Date | null, 
 export function draftClosureSummary(input: {
   title: string;
   status: CaseStatus;
-  judgment: { outcome: JudgmentOutcome; sentenceType: SentenceType | null; sentenceDetail: string | null; baselineIndictRatio: number; verdictGuilty: number; verdictNotGuilty: number } | null;
+  judgment: {
+    round: number;
+    outcome: JudgmentOutcome;
+    sentenceType: SentenceType | null;
+    sentenceDetail: string | null;
+    baselineIndictRatio: number;
+    verdictGuilty: number;
+    verdictNotGuilty: number;
+  } | null;
 }): string {
   if (input.status === "DISMISSED" || !input.judgment) {
     return `「${input.title}」 사건은 공소 투표 결과 폐기되어 재판이 열리지 않았습니다. 참여해 주신 모든 분께 감사드립니다.`;
@@ -51,8 +59,10 @@ export function draftClosureSummary(input: {
   const guiltyRatio = total === 0 ? 0 : Math.round((j.verdictGuilty / total) * 1000) / 10;
   const sentence = j.outcome === "guilty" && j.sentenceType ? ` (${SENTENCE_LABELS[j.sentenceType]} ${j.sentenceDetail ?? ""})`.replace(" )", ")") : "";
   return [
-    `「${input.title}」 사건은 ${OUTCOME_LABELS[j.outcome]}${sentence} 판결로 확정되었습니다.`,
-    `공소 투표에서 공소 제기는 ${j.baselineIndictRatio}%였고, 비공개 평결에서 유죄는 ${guiltyRatio}%였습니다.`,
+    `「${input.title}」 사건은 ${j.round === 1 ? "" : "2심에서 "}${OUTCOME_LABELS[j.outcome]}${sentence} 판결로 확정되었습니다.`,
+    j.round === 1
+      ? `공소 투표에서 공소 제기는 ${j.baselineIndictRatio}%였고, 비공개 평결에서 유죄는 ${guiltyRatio}%였습니다.`
+      : `2심을 시작할 때 공소 제기 측 배심원은 ${j.baselineIndictRatio}%였고, 2심 비공개 평결에서 유죄는 ${guiltyRatio}%였습니다.`,
     "참여해 주신 모든 배심원께 감사드립니다.",
   ].join(" ");
 }

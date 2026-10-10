@@ -3,12 +3,14 @@ import { Prisma, type Side } from "@prisma/client";
 import {
   type ChecklistKey,
   type DurationInput,
-  MVP_STAGES,
+  CASE_STAGES,
   SIDE_LABELS,
   checkCaseSettings,
+  stageKind,
   missingChecklistItems,
   ratio,
 } from "@/domain/case";
+import { signRound2 } from "./appeal";
 import { db } from "./db";
 import { env } from "./env";
 import { CASE_ID, StatusConflictError, advanceDueStages, indictCase, transition } from "./lifecycle";
@@ -57,7 +59,7 @@ export async function saveDraft(input: DraftInput): Promise<Result> {
 
   await db.$transaction(async (tx) => {
     await tx.case.upsert({ where: { id: CASE_ID }, create: { id: CASE_ID, ...data }, update: data });
-    for (const { stage } of MVP_STAGES) {
+    for (const { stage } of CASE_STAGES) {
       await tx.stageSchedule.upsert({
         where: { round_stage: { round: 1, stage } },
         create: { round: 1, stage, durationMinutes: input.durations[stage] },
@@ -153,10 +155,11 @@ export async function indict(operatorId: string, note: string): Promise<Result> 
   return { ok: true };
 }
 
-/** 03 C-04 공판준비절차 서명: 투표에 참여한 배심원만, 공판준비 기간에만 (01) */
+/** 03 C-04 공판준비절차 서명: 투표에 참여한 배심원만, 공판준비 기간에만 (01). 2심 모집 중에는 승인된 추가 배심원이 서명합니다 (02). */
 export async function signPretrial(userId: string): Promise<Result> {
   await advanceDueStages(db);
   const current = await getCase();
+  if (current?.status === "APPEAL_RECRUITMENT") return signRound2(db, userId);
   if (current?.status !== "PRETRIAL") return { ok: false, error: "지금은 공판준비절차 서명 기간이 아닙니다." };
   const signed = await db.participation.updateMany({
     where: { userId, round: current.round, status: "voted" },
@@ -188,13 +191,13 @@ export async function getCaseView(userId: string | null) {
     indictmentResult = { indict, dismiss, indictRatio: ratio(indict, indict + dismiss), dismissRatio: ratio(dismiss, indict + dismiss) };
   }
 
-  const stageKind = MVP_STAGES.find((s) => s.stage === current.status)?.kind ?? null;
-  const operatorOverdue = stageKind === "operator" && schedule?.endsAt != null && schedule.endsAt < new Date();
+  const kind = stageKind(current.status);
+  const operatorOverdue = kind === "operator" && schedule?.endsAt != null && schedule.endsAt < new Date();
 
   return {
     case: current,
     deadline: schedule?.endsAt ?? null,
-    stageKind,
+    stageKind: kind,
     operatorOverdue,
     voteCount,
     indictmentResult,

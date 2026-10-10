@@ -1,3 +1,4 @@
+import type { CaseStatus } from "@prisma/client";
 import Link from "next/link";
 import { STATUS_LABELS } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
@@ -7,6 +8,14 @@ import { db } from "@/server/db";
 import { advanceDueStages } from "@/server/lifecycle";
 
 export const metadata = { title: "관리자 · Virtual Courtroom" };
+
+/** 운영자가 처리해야 넘어가는 단계와 할 일 (03 O-01) */
+const OPERATOR_TODO: Partial<Record<CaseStatus, string>> = {
+  INDICTMENT_PENDING: "공소를 제기해 재판을 시작해 주세요.",
+  ADVOCATE_SELECTION: "추천 투표가 끝나면 진영별 최종 변론인을 단 한 번 선정해 주세요.",
+  SENTENCING: "평결을 참고해 판결을 작성하고 선고해 주세요.",
+  APPEAL_DECISION: "이의 신청이 담긴 리뷰를 확인하고 2심 개시 또는 기각을 결정해 주세요.",
+};
 
 // 03 O-01 대시보드
 export default async function AdminPage() {
@@ -20,20 +29,15 @@ export default async function AdminPage() {
     listReports(),
     listPendingAppeals(),
   ]);
+  const ended = current?.status === "DISMISSED" || current?.status === "FINALIZED";
   const todo =
     !current || current.status === "DRAFT"
       ? "사건을 만들어 검수한 뒤 게시해 주세요."
-      : current.status === "INDICTMENT_PENDING"
-        ? "공소를 제기해 재판을 시작해 주세요."
-        : current.status === "ADVOCATE_SELECTION"
-          ? "추천 투표가 끝나면 진영별 최종 변론인을 단 한 번 선정해 주세요."
-          : current.status === "SENTENCING"
-            ? "평결을 참고해 판결을 작성하고 선고해 주세요."
-            : current.status === "DISMISSED" || current.status === "FINALIZED"
-              ? current.closureScheduledAt
-                ? "공지한 폐쇄 일시가 지나면 사건 관리 화면에서 사이트 폐쇄를 실행해 주세요."
-                : "사건이 끝났습니다. 사건 관리 화면에서 사이트 폐쇄 일시를 공지해 주세요."
-              : null;
+      : ended
+        ? current.closureScheduledAt
+          ? "공지한 폐쇄 일시가 지나면 사건 관리 화면에서 사이트 폐쇄를 실행해 주세요."
+          : "사건이 끝났습니다. 사건 관리 화면에서 사이트 폐쇄 일시를 공지해 주세요."
+        : (OPERATOR_TODO[current.status] ?? null);
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-10">

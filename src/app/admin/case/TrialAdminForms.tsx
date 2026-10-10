@@ -84,7 +84,7 @@ export function JudgmentForm() {
     <form
       onSubmit={(event) => {
         event.preventDefault();
-        if (!window.confirm("판결을 선고할까요?\n\n선고하면 판결이 확정되고 되돌릴 수 없습니다.")) return;
+        if (!window.confirm("판결을 선고할까요?\n\n선고한 판결은 되돌릴 수 없고, 리뷰 기간이 시작됩니다.")) return;
         const formData = new FormData(event.currentTarget);
         startTransition(() => action(formData));
       }}

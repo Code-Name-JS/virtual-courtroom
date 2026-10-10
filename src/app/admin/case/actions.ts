@@ -3,10 +3,10 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/components/form";
-import { type ChecklistKey, type DurationInput, MVP_STAGES, REVIEW_CHECKLIST } from "@/domain/case";
+import { type ChecklistKey, type DurationInput, CASE_STAGES, REVIEW_CHECKLIST } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
 import { indict, publishCase, saveDraft } from "@/server/case-service";
-import { chooseAdvocates, pronounce, requestRecommendations } from "@/server/trial-service";
+import { chooseAdvocates, decideAppeal, pronounce, requestRecommendations } from "@/server/trial-service";
 import { announceClosure, executeClosure } from "@/server/closure";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
@@ -19,7 +19,7 @@ function parseDraft(formData: FormData) {
   // 시연 모드에서는 분 단위, 실제 운영에서는 일 단위로 입력받음
   const unit = env.demoMode ? 1 : 24 * 60;
   const durations = Object.fromEntries(
-    MVP_STAGES.map(({ stage }) => [stage, Math.round(Number(formData.get(`duration_${stage}`)) * unit)]),
+    CASE_STAGES.map(({ stage }) => [stage, Math.round(Number(formData.get(`duration_${stage}`)) * unit)]),
   ) as DurationInput;
   const maxRaw = text(formData, "maxParticipants");
   const generatedAt = text(formData, "aiGeneratedAt");
@@ -102,6 +102,20 @@ export async function pronounceAction(_prev: FormState, formData: FormData): Pro
   if (!result.ok) return { error: result.error };
   revalidatePath("/", "layout");
   return { message: "판결을 선고했습니다." };
+}
+
+export async function decideAppealAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { user } = await requireOperator();
+  const capRaw = text(formData, "perSideCap");
+  const result = await decideAppeal(user.id, {
+    open: formData.get("decision") === "open",
+    reason: text(formData, "reason"),
+    criteria: text(formData, "criteria"),
+    perSideCap: capRaw ? Number(capRaw) : null,
+  });
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  return { message: formData.get("decision") === "open" ? "2심을 개시했습니다. 2심 배심원 모집이 시작되었습니다." : "2심을 기각했습니다. 1심 판결이 확정되었습니다." };
 }
 
 export async function announceClosureAction(_prev: FormState, formData: FormData): Promise<FormState> {

@@ -2,7 +2,7 @@
 
 import { startTransition, useActionState } from "react";
 import { FormMessage, type FormState } from "@/components/form";
-import { MVP_STAGES, REVIEW_CHECKLIST, STATUS_LABELS } from "@/domain/case";
+import { CASE_STAGES, REVIEW_CHECKLIST, STATUS_LABELS } from "@/domain/case";
 import { saveDraftAction } from "./actions";
 
 export type CaseFormValues = {
@@ -106,7 +106,7 @@ export function CaseForm({ values, demoMode, minAllowed }: { values: CaseFormVal
           </label>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {MVP_STAGES.map(({ stage, kind }) => (
+          {CASE_STAGES.map(({ stage, kind }) => (
             <label key={stage} className="block space-y-1">
               <Label hint={kind === "operator" ? "운영자 처리 기한" : undefined}>
                 {STATUS_LABELS[stage]} ({unitLabel})
@@ -115,7 +115,9 @@ export function CaseForm({ values, demoMode, minAllowed }: { values: CaseFormVal
             </label>
           ))}
         </div>
-        <p className="text-xs text-slate-500">01 기준: 공소 투표는 일주일 또는 한 달, 증거 제출은 한 달입니다. 게시한 뒤에는 기간을 바꿀 수 없습니다.</p>
+        <p className="text-xs text-slate-500">
+          01 기준: 공소 투표는 일주일 또는 한 달, 증거 제출은 한 달입니다. 2심은 2심 배심원 모집부터 리뷰까지 같은 기간으로 다시 진행합니다. 게시한 뒤에는 기간을 바꿀 수 없습니다.
+        </p>
       </fieldset>
 
       <fieldset className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">

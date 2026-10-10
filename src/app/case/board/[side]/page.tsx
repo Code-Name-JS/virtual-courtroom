@@ -15,23 +15,28 @@ export const metadata = { title: "진영 게시판 · Virtual Courtroom" };
 const SIDES = ["indict", "dismiss"] as const;
 
 // 03 C-05 진영 게시판 · 피드
-export default async function BoardPage({ params }: { params: Promise<{ side: string }> }) {
+export default async function BoardPage({ params, searchParams }: { params: Promise<{ side: string }>; searchParams: Promise<{ round?: string }> }) {
   const { side } = await params;
   if (side !== "indict" && side !== "dismiss") notFound();
 
   await advanceDueStages(db);
   const user = await getCurrentUser();
-  const { viewer, round, status } = await getViewer(user);
-  const readable = canReadBoard(status, viewer, side);
+  const { viewer, round: currentRound, status } = await getViewer(user);
+  // ?round=1: 2심이 열린 뒤 읽기 전용으로 보관된 1심 게시판 (02 2심 진행 방식)
+  const requested = Number((await searchParams).round);
+  const round = Number.isInteger(requested) && requested >= 1 && requested < currentRound ? requested : currentRound;
+  const archived = round < currentRound;
+  const query = archived ? `?round=${round}` : "";
+  const readable = canReadBoard(status, viewer, side, archived);
 
   const tabs = (
     <nav className="flex gap-2">
       {SIDES.map((s) => {
-        const open = canReadBoard(status, viewer, s);
+        const open = canReadBoard(status, viewer, s, archived);
         return (
           <Link
             key={s}
-            href={`/case/board/${s}`}
+            href={`/case/board/${s}${query}`}
             className={`rounded px-4 py-2 text-sm font-semibold ${s === side ? (s === "indict" ? "bg-indict text-white" : "bg-dismiss text-white") : "bg-white text-slate-700"} ${open ? "" : "opacity-50"}`}
           >
             {SIDE_LABELS[s]} 측 {open ? "" : "🔒"}
@@ -61,7 +66,7 @@ export default async function BoardPage({ params }: { params: Promise<{ side: st
 
   const threads = await listThreads(round, side, viewer.isOperator);
   const code = await recordViews(user.id, threads.map((t) => t.id));
-  const write = canWriteBoard(status, viewer, side);
+  const write = archived ? ({ ok: false } as const) : canWriteBoard(status, viewer, side);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-10">
@@ -69,9 +74,16 @@ export default async function BoardPage({ params }: { params: Promise<{ side: st
         사건 페이지로
       </Link>
       <div className="space-y-2">
-        <h1 className="text-2xl font-bold">{SIDE_LABELS[side]} 측 게시판</h1>
+        <h1 className="text-2xl font-bold">
+          {currentRound > 1 && `${round}심 `}
+          {SIDE_LABELS[side]} 측 게시판
+        </h1>
         <p className="text-sm text-slate-600">
-          {status === "EVIDENCE" ? "증거 제출 기간입니다. 이 게시판은 같은 진영 배심원만 볼 수 있습니다." : "증거 제출이 끝나 양측 게시판이 공개되었습니다. 이제는 읽기만 할 수 있습니다."}
+          {archived
+            ? "읽기 전용으로 보관된 지난 심급의 게시판입니다."
+            : status === "EVIDENCE"
+              ? "증거 제출 기간입니다. 이 게시판은 같은 진영 배심원만 볼 수 있습니다."
+              : "증거 제출이 끝나 양측 게시판이 공개되었습니다. 이제는 읽기만 할 수 있습니다."}
         </p>
       </div>
       {tabs}

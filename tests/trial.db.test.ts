@@ -118,7 +118,7 @@ describe.skipIf(!url)("최종 변론인 선정 · 최종 변론 · 평결 · 판
     expect(await db.notification.count({ where: { type: "advocate_selected", sendEmail: true } })).toBe(2);
   });
 
-  it("평결은 누가 어디에 투표했는지 알 수 없게 저장되고, 판결 선고로 확정된다", async () => {
+  it("평결은 누가 어디에 투표했는지 알 수 없게 저장되고, 판결을 선고하면 리뷰가 시작된다", async () => {
     await setup(12, 1);
     await advanceDueStages(db); // → FINAL_ARGUMENT
     await db.stageSchedule.update({ where: { round_stage: { round: 1, stage: "FINAL_ARGUMENT" } }, data: { endsAt: minutesAgo(1) } });
@@ -143,6 +143,6 @@ describe.skipIf(!url)("최종 변론인 선정 · 최종 변론 · 평결 · 판
     await pronounceJudgment(db, operatorId, { outcome: "not_guilty", sentenceType: null, sentenceDetail: "", reasoning: "증거 부족" });
     const judgment = await db.judgment.findUniqueOrThrow({ where: { round: 1 } });
     expect(judgment).toMatchObject({ outcome: "not_guilty", verdictGuilty: 1, verdictNotGuilty: 2, baselineIndictRatio: 66.7 });
-    expect((await db.case.findUniqueOrThrow({ where: { id: 1 } })).status).toBe("FINALIZED");
+    expect((await db.case.findUniqueOrThrow({ where: { id: 1 } })).status).toBe("REVIEW");
   });
 });

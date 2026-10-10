@@ -36,7 +36,14 @@ export function boardsAreOpen(status: CaseStatus): boolean {
   return BOARDS_OPEN.includes(status);
 }
 
-export function canReadBoard(status: CaseStatus, viewer: Viewer, boardSide: Side): boolean {
+/**
+ * @param archived 지난 심급의 게시판인지. 2심이 열리면 1심 게시판은 읽기 전용으로 보관되고,
+ *   1심 판결 선고 뒤이므로 로그인한 모든 회원이 읽을 수 있습니다 (02 2심 진행 방식).
+ */
+export function canReadBoard(status: CaseStatus, viewer: Viewer, boardSide: Side, archived = false): boolean {
+  if (archived) return viewer.isOperator || viewer.loggedIn;
+  // 2심 배심원 모집 중에는 2심 게시판이 아직 열리지 않음
+  if (status === "APPEAL_RECRUITMENT") return false;
   if (status !== "EVIDENCE" && !boardsAreOpen(status)) return false;
   if (viewer.isOperator) return true;
   if (!viewer.loggedIn) return false;

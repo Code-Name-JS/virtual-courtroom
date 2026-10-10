@@ -6,8 +6,11 @@ import { getViewer } from "@/server/board-service";
 import { getTrialView } from "@/server/trial-service";
 import { getCurrentUser } from "@/server/auth";
 import { getCaseView } from "@/server/case-service";
+import { getAppealView, myReviewState, reviewCounts } from "@/server/appeal";
+import { db } from "@/server/db";
+import { AppealPanel, ReviewSummary } from "./AppealSections";
 import { SignPanel } from "./SignPanel";
-import { TrialSections } from "./TrialSections";
+import { JudgmentSection, TrialSections } from "./TrialSections";
 import { VotePanel } from "./VotePanel";
 
 export const metadata = { title: "사건 · Virtual Courtroom" };
@@ -32,7 +35,13 @@ export default async function CasePage() {
   const isOperator = user?.role === "operator";
   const { viewer } = await getViewer(user);
   const trial = await getTrialView(loggedIn ? user!.id : null);
+  const member = loggedIn ? user! : null;
+  const [appeal, review, counts] = await Promise.all([getAppealView(db, member), myReviewState(db, member), reviewCounts(db)]);
+  const round = view.case.round;
   const todo = todoFor({
+    round,
+    review,
+    appeal: appeal?.todo ?? null,
     status: view.case.status,
     loggedIn,
     isOperator,
@@ -51,6 +60,7 @@ export default async function CasePage() {
   });
   const status = view.case.status;
   const showBoards = status === "EVIDENCE" || canReadBoard(status, viewer, "indict") || canReadBoard(status, viewer, "dismiss");
+  const showArchive = round > 1 && canReadBoard(status, viewer, "indict", true);
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-10">
@@ -81,6 +91,10 @@ export default async function CasePage() {
 
       {trial && <TrialSections status={status} trial={trial} isOperator={isOperator} />}
 
+      {appeal && <AppealPanel appeal={appeal} loggedIn={loggedIn} />}
+
+      <ReviewSummary status={status} round={round} counts={counts} loggedIn={loggedIn} />
+
       {status === "PRETRIAL" && (
         <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-bold">공판준비절차 서명</h2>
@@ -94,33 +108,59 @@ export default async function CasePage() {
         </section>
       )}
 
-      {showBoards && (
+      {(showBoards || showArchive) && (
         <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
           <h2 className="text-lg font-bold">진영 게시판</h2>
-          <p className="text-sm text-slate-600">
-            {status === "EVIDENCE"
-              ? "증거 제출 기간에는 자기 측 게시판만 볼 수 있습니다. 기간이 끝나면 양측 게시판이 모두 공개됩니다."
-              : "증거 제출이 끝나 양측 게시판이 공개되었습니다."}
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2">
-            {(["indict", "dismiss"] as const).map((side) => {
-              const open = canReadBoard(status, viewer, side);
-              return open ? (
-                <Link
-                  key={side}
-                  href={`/case/board/${side}`}
-                  className={`rounded-lg border-2 px-4 py-4 font-bold ${side === "indict" ? "border-indict text-indict" : "border-dismiss text-dismiss"}`}
-                >
-                  {SIDE_LABELS[side]} 측 게시판 →
-                </Link>
-              ) : (
-                <div key={side} className="rounded-lg border-2 border-dashed border-slate-200 px-4 py-4 font-bold text-slate-400">
-                  {SIDE_LABELS[side]} 측 게시판 🔒
-                </div>
-              );
-            })}
-          </div>
+          {showBoards && (
+            <>
+              <p className="text-sm text-slate-600">
+                {round > 1 && "2심 게시판입니다. "}
+                {status === "EVIDENCE"
+                  ? "증거 제출 기간에는 자기 측 게시판만 볼 수 있습니다. 기간이 끝나면 양측 게시판이 모두 공개됩니다."
+                  : "증거 제출이 끝나 양측 게시판이 공개되었습니다."}
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                {(["indict", "dismiss"] as const).map((side) => {
+                  const open = canReadBoard(status, viewer, side);
+                  return open ? (
+                    <Link
+                      key={side}
+                      href={`/case/board/${side}`}
+                      className={`rounded-lg border-2 px-4 py-4 font-bold ${side === "indict" ? "border-indict text-indict" : "border-dismiss text-dismiss"}`}
+                    >
+                      {SIDE_LABELS[side]} 측 게시판 →
+                    </Link>
+                  ) : (
+                    <div key={side} className="rounded-lg border-2 border-dashed border-slate-200 px-4 py-4 font-bold text-slate-400">
+                      {SIDE_LABELS[side]} 측 게시판 🔒
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+          {showArchive && (
+            <div className="space-y-2">
+              <p className="text-sm text-slate-600">1심 게시판은 읽기 전용으로 보관되어 있습니다.</p>
+              <div className="flex flex-wrap gap-2">
+                {(["indict", "dismiss"] as const).map((side) => (
+                  <Link key={side} href={`/case/board/${side}?round=1`} className="rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
+                    1심 {SIDE_LABELS[side]} 측 게시판 →
+                  </Link>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
+      )}
+
+      {trial && trial.pastJudgments.length > 0 && (
+        <div className="space-y-2">
+          <h2 className="px-1 text-sm font-semibold text-slate-500">1심 기록</h2>
+          {trial.pastJudgments.map((past) => (
+            <JudgmentSection key={past.judgment.id} judgment={past.judgment} persuasion={past.persuasion} round={past.judgment.round} compact />
+          ))}
+        </div>
       )}
 
       {view.indictmentResult && (

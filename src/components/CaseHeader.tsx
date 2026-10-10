@@ -1,15 +1,18 @@
-import { PROGRESS_STAGES, STATUS_LABELS, progressIndex } from "@/domain/case";
+import { STATUS_LABELS, progressIndex, progressStages, roundLabel } from "@/domain/case";
 import type { CaseView } from "@/server/case-service";
 import { Countdown } from "./Countdown";
 
 // 03 C-01 사건 페이지 · 공통 머리
 export function CaseHeader({ view, todo }: { view: CaseView; todo: string }) {
-  const current = progressIndex(view.case.status);
+  const round = view.case.round;
+  const stages = progressStages(round);
+  const current = progressIndex(view.case.status, round);
 
   return (
     <section className="space-y-5 rounded-lg border border-slate-200 bg-white p-6">
       <div className="flex flex-wrap items-center gap-2">
         <span className="rounded bg-gold-500/15 px-2 py-0.5 text-xs font-semibold text-gold-600">AI가 만든 사건</span>
+        {round > 1 && <span className="rounded bg-gold-500 px-2 py-0.5 text-xs font-bold text-navy-950">{roundLabel(round)}</span>}
         <span className="rounded bg-navy-900 px-2 py-0.5 text-xs font-semibold text-white">{STATUS_LABELS[view.case.status]}</span>
         {view.mySide && (
           <span className="rounded border border-slate-300 px-2 py-0.5 text-xs text-slate-700">내 진영: {view.mySide}</span>
@@ -18,8 +21,8 @@ export function CaseHeader({ view, todo }: { view: CaseView; todo: string }) {
 
       <h1 className="text-2xl font-bold">{view.case.title}</h1>
 
-      <ol className="grid grid-cols-4 gap-1 text-center text-[11px] sm:grid-cols-8">
-        {PROGRESS_STAGES.map((stage, index) => (
+      <ol className={`grid grid-cols-3 gap-1 text-center text-[11px] ${round === 1 ? "sm:grid-cols-9" : "sm:grid-cols-8"}`}>
+        {stages.map((stage, index) => (
           <li
             key={stage}
             className={`rounded px-1 py-1.5 ${

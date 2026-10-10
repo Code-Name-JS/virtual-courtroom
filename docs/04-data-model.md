@@ -417,6 +417,14 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | `user.totp_secret_enc`, `user.totp_enabled_at` | 관리자 2단계 인증 비밀 값(암호화 저장)과 설정 완료 시각 |
 | `email_verification.created_at` | 인증 코드 재발송 제한(60초)에 사용 |
 | `notification.send_email`, `notification.emailed_at` | 이메일로도 보내야 하는 알림인지와 보낸 시각. 워커가 보내지 않은 것을 모아 발송 |
+| `case.appeal_side_cap` | (M5) 2심을 열 때 운영자가 공개한 진영별 추가 인원 상한. 비우면 상한 없음 |
+| `case.appeal_approved_at` | (M5) 2심 신청 마감 후 승인 기준을 적용한 시각. 한 번만 적용하기 위해 씀 |
+
+2심 참여는 `participation` (round 2)으로 기록합니다 (M5).
+
+- 1심 배심원이 참여를 고르면 `joined_via = continued`, `status = signed` (1심에서 서명했으므로 다시 서명하지 않음). 불참을 고르면 `status = excluded`, `excluded_reason = declined_round2`
+- 추가 배심원이 승인되면 `joined_via = appeal_application`, `status = voted`(서명 대기)로 만들고, 서명하면 `signed`. 모집 마감까지 서명하지 않으면 `excluded`(`unsigned`)
+- 2심 설득 지표의 기준(`judgment.baseline_indict_ratio`)은 round 2에서 `signed_at`이 있는(2심을 시작할 때 서명을 마친) 사람의 진영별 비율로 계산
 
 ---
 
@@ -474,7 +482,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 
 | # | 질문 | 제안 |
 |---|---|---|
-| 3 | 리뷰에 별점을 둘까? (시안: 4.6 / 5) | 선택 항목으로 둠 |
+| 3 | ~~리뷰에 별점을 둘까? (시안: 4.6 / 5)~~ | **결정됨 (M5)**: 선택 항목(1~5점)으로 두고, 리뷰 화면에 평균을 보여 줌 |
 | 4 | 증거자료로 파일 업로드를 허용할까? | 링크, 이미지, 인용문만 허용. 이미지는 5MB 이하 4장까지 ([05. 게시판 · 증거자료 정책](./05-policy-and-risk.md#게시판--증거자료-정책)의 제안값) |
 | 5 | 스레드 글을 고치거나 지울 수 있나? | 증거 제출 기간 안에서 수정 가능, 수정 이력은 보관. 삭제하면 배심원에게는 보이지 않게 숨기되 실제로 지우지 않고, 운영자는 계속 볼 수 있음 (유출 흔적을 지우는 것을 막기 위해) |
 | 7 | ~~IP 변경 인증을 하루에 몇 번까지 허용할까?~~ | **결정됨**: 계정당 하루 5회 ([05. IP · 계정 정책](./05-policy-and-risk.md#ip--계정-정책)) |

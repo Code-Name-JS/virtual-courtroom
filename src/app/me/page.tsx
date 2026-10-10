@@ -3,6 +3,7 @@ import { STATUS_LABELS, todoFor } from "@/domain/case";
 import { requireUser } from "@/server/auth";
 import { getCaseView } from "@/server/case-service";
 import { db } from "@/server/db";
+import { getAppealView, myReviewState } from "@/server/appeal";
 
 export const metadata = { title: "내 활동 · Virtual Courtroom" };
 
@@ -11,9 +12,11 @@ const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeS
 // 03 U-03 내 활동, U-04 알림
 export default async function MePage() {
   const { user } = await requireUser();
-  const [view, notifications] = await Promise.all([
+  const [view, notifications, review, appeal] = await Promise.all([
     getCaseView(user.id),
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10 }),
+    myReviewState(db, user),
+    getAppealView(db, user),
   ]);
 
   return (
@@ -37,6 +40,9 @@ export default async function MePage() {
                 isOperator: user.role === "operator",
                 hasVoted: Boolean(view.participation),
                 participationStatus: view.participation?.status ?? null,
+                round: view.case.round,
+                review,
+                appeal: appeal?.todo ?? null,
               })}
             </p>
             <Link href="/case" className="inline-block font-semibold text-navy-800 underline">

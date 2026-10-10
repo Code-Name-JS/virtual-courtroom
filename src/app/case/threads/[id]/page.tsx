@@ -15,18 +15,21 @@ export const metadata = { title: "스레드 · Virtual Courtroom" };
 export default async function ThreadPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const user = await getCurrentUser();
-  const { viewer, status } = await getViewer(user);
+  const { viewer, status, round } = await getViewer(user);
   const thread = await getThread(id, viewer.isOperator);
-  if (!thread || !user || !canReadBoard(status, viewer, thread.root.side)) notFound();
+  // 지난 심급의 스레드는 읽기 전용으로 보관 (02 2심 진행 방식)
+  const archived = thread !== null && thread.root.round < round;
+  if (!thread || !user || !canReadBoard(status, viewer, thread.root.side, archived)) notFound();
 
   const side = thread.root.side;
   const posts = [thread.root, ...thread.replies];
   const code = await recordViews(user.id, posts.map((p) => p.id));
-  const write = canWriteBoard(status, viewer, side);
+  const write = archived ? ({ ok: false } as const) : canWriteBoard(status, viewer, side);
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-10">
-      <Link href={`/case/board/${side}`} className="text-sm text-slate-600 underline">
+      <Link href={`/case/board/${side}${archived ? `?round=${thread.root.round}` : ""}`} className="text-sm text-slate-600 underline">
+        {archived && `${thread.root.round}심 `}
         {SIDE_LABELS[side]} 측 게시판으로
       </Link>
       <WatermarkNotice code={code} />

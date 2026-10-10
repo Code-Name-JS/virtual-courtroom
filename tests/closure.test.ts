@@ -28,11 +28,18 @@ describe("사이트 폐쇄 규칙", () => {
     const text = draftClosureSummary({
       title: "표절 사건",
       status: "FINALIZED",
-      judgment: { outcome: "guilty", sentenceType: "fine", sentenceDetail: "300만 원", baselineIndictRatio: 62, verdictGuilty: 48, verdictNotGuilty: 52 },
+      judgment: { round: 1, outcome: "guilty", sentenceType: "fine", sentenceDetail: "300만 원", baselineIndictRatio: 62, verdictGuilty: 48, verdictNotGuilty: 52 },
     });
     expect(text).toContain("유죄 (벌금 300만 원) 판결로 확정");
     expect(text).toContain("공소 제기는 62%");
     expect(text).toContain("유죄는 48%");
     expect(draftClosureSummary({ title: "표절 사건", status: "DISMISSED", judgment: null })).toContain("폐기");
+    const appeal = draftClosureSummary({
+      title: "표절 사건",
+      status: "FINALIZED",
+      judgment: { round: 2, outcome: "not_guilty", sentenceType: null, sentenceDetail: null, baselineIndictRatio: 55, verdictGuilty: 4, verdictNotGuilty: 6 },
+    });
+    expect(appeal).toContain("2심에서 무죄 판결로 확정");
+    expect(appeal).toContain("2심을 시작할 때 공소 제기 측 배심원은 55%");
   });
 });

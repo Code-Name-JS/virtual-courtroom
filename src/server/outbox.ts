@@ -6,6 +6,8 @@ const SUBJECTS: Record<string, string> = {
   pretrial_started: "[Virtual Courtroom] 공판준비절차 서명을 해 주세요",
   advocate_selected: "[Virtual Courtroom] 최종 변론인으로 선정되었습니다",
   deliberation_started: "[Virtual Courtroom] 배심원 평결을 해 주세요",
+  appeal_opened: "[Virtual Courtroom] 2심이 열렸습니다",
+  appeal_application_approved: "[Virtual Courtroom] 2심 추가 배심원으로 승인되었습니다",
   closure_announced: "[Virtual Courtroom] 사이트 폐쇄 안내",
 };
 

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MIN_PARTICIPANTS, MVP_STAGES, STATUS_LABELS, defaultDurations } from "@/domain/case";
+import { MIN_PARTICIPANTS, CASE_STAGES, ROUND2_STAGES, STATUS_LABELS, defaultDurations } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
 import { db } from "@/server/db";
@@ -11,8 +11,11 @@ import { AnnounceClosureForm, ExecuteClosureForm } from "./ClosureForms";
 import { caseHasEnded, draftClosureSummary, minimumClosureLeadMinutes } from "@/domain/closure";
 import { AdvocateSelectForm, JudgmentForm } from "./TrialAdminForms";
 import { requestAiAction } from "./actions";
-import { getSelectionView, getSentencingView, getTrialView } from "@/server/trial-service";
+import { getAppealReviews, getApplications, getSelectionView, getSentencingView, getTrialView } from "@/server/trial-service";
 import { SIDE_LABELS } from "@/domain/case";
+import { DEFAULT_APPEAL_CRITERIA } from "@/domain/appeal";
+import { getAppealView } from "@/server/appeal";
+import { AppealDecisionForm } from "./AppealAdminForms";
 
 export const metadata = { title: "사건 관리 · Virtual Courtroom" };
 
@@ -29,12 +32,12 @@ export default async function AdminCasePage() {
   // 워커가 없어도 마감이 지난 단계가 넘어가도록 (사건 페이지와 같은 방식)
   await advanceDueStages(db);
   const current = await getCase();
-  const schedules = await db.stageSchedule.findMany({ where: { round: 1 } });
+  const schedules = await db.stageSchedule.findMany({ orderBy: { round: "asc" } });
   const unit = env.demoMode ? 1 : 24 * 60;
 
   if (!current || current.status === "DRAFT") {
     const durations = defaultDurations(env.demoMode);
-    const saved = Object.fromEntries(schedules.map((s) => [s.stage, s.durationMinutes]));
+    const saved = Object.fromEntries(schedules.filter((s) => s.round === 1).map((s) => [s.stage, s.durationMinutes]));
     const values: CaseFormValues = {
       title: current?.title ?? "",
       summary: current?.summary ?? "",
@@ -45,7 +48,7 @@ export default async function AdminCasePage() {
       minParticipants: current?.minParticipants ?? MIN_PARTICIPANTS,
       maxParticipants: current?.maxParticipants ?? null,
       durations: Object.fromEntries(
-        MVP_STAGES.map(({ stage }) => [stage, Math.max(1, Math.round((saved[stage] ?? durations[stage]) / unit))]),
+        CASE_STAGES.map(({ stage }) => [stage, Math.max(1, Math.round((saved[stage] ?? durations[stage]) / unit))]),
       ),
       checklist: (current?.reviewChecklist as string[] | null) ?? [],
       reviewNote: current?.reviewNote ?? "",
@@ -84,28 +87,36 @@ export default async function AdminCasePage() {
       </section>
       {current.status === "ADVOCATE_SELECTION" && <AdvocateAdmin />}
       {current.status === "SENTENCING" && <SentencingAdmin />}
+      {current.status === "APPEAL_DECISION" && <AppealDecisionAdmin />}
+      {current.status === "APPEAL_RECRUITMENT" && <RecruitmentAdmin />}
       {caseHasEnded(current.status) && <ClosureAdmin />}
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="font-semibold">단계 일정</h2>
         <table className="w-full text-sm">
           <thead className="text-left text-slate-500">
             <tr>
-              <th className="py-1">단계</th>
+              <th className="py-1">심급</th>
+              <th>단계</th>
               <th>시작</th>
               <th>마감</th>
             </tr>
           </thead>
           <tbody>
-            {MVP_STAGES.map(({ stage }) => {
-              const schedule = schedules.find((s) => s.stage === stage);
-              return (
-                <tr key={stage} className="border-t border-slate-100">
-                  <td className="py-1.5">{STATUS_LABELS[stage]}</td>
-                  <td>{schedule?.startsAt ? dateFormat.format(schedule.startsAt) : "—"}</td>
-                  <td>{schedule?.endsAt ? dateFormat.format(schedule.endsAt) : "—"}</td>
-                </tr>
-              );
-            })}
+            {[1, 2].flatMap((round) =>
+              (round === 1 ? CASE_STAGES.map((s) => s.stage) : ROUND2_STAGES)
+                .map((stage) => schedules.find((s) => s.round === round && s.stage === stage))
+                .filter((schedule) => schedule !== undefined)
+                // 1심의 '2심 배심원 모집' 행은 2심 기간을 정해 두는 용도라 표에서 뺌
+                .filter((schedule) => (round === 1 ? schedule.stage !== "APPEAL_RECRUITMENT" : current.round === 2))
+                .map((schedule) => (
+                  <tr key={schedule.id} className="border-t border-slate-100">
+                    <td className="py-1.5">{round}심</td>
+                    <td>{STATUS_LABELS[schedule.stage]}</td>
+                    <td>{schedule.startsAt ? dateFormat.format(schedule.startsAt) : "—"}</td>
+                    <td>{schedule.endsAt ? dateFormat.format(schedule.endsAt) : "—"}</td>
+                  </tr>
+                )),
+            )}
           </tbody>
         </table>
       </section>
@@ -158,16 +169,86 @@ async function AdvocateAdmin() {
 }
 
 async function SentencingAdmin() {
-  const view = await getSentencingView();
-  if (!view) return null;
+  const [view, current] = await Promise.all([getSentencingView(), getCase()]);
+  if (!view || !current) return null;
   return (
     <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-6">
       <h2 className="font-semibold">판결 작성</h2>
       <p className="text-sm">
         배심원 평결: 유죄 <strong>{view.guilty}</strong>표 · 무죄 <strong>{view.notGuilty}</strong>표 · 설득 지표: 공소 제기 {view.persuasion.baselineIndictRatio}% → 유죄 {view.persuasion.guiltyRatio}%
       </p>
-      <p className="text-sm text-amber-900">평결을 참고해 무죄 또는 유죄(징역·집행유예·벌금)로 선고하고, 선고 이유를 함께 적어 주세요. 선고하면 판결이 확정됩니다 (MVP는 리뷰·2심 없음).</p>
+      <p className="text-sm text-amber-900">평결을 참고해 무죄 또는 유죄(징역·집행유예·벌금)로 선고하고, 선고 이유를 함께 적어 주세요. 선고하면 리뷰 기간이 시작됩니다{current.round === 1 ? " (1심 리뷰에서는 배심원이 이의를 신청할 수 있습니다)" : " (2심 판결에는 항소할 수 없습니다)"}.</p>
       <JudgmentForm />
+    </section>
+  );
+}
+
+// 03 O-03 2심 결정
+async function AppealDecisionAdmin() {
+  const reviews = await getAppealReviews();
+  return (
+    <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-6">
+      <h2 className="font-semibold">2심 결정</h2>
+      <p className="text-sm text-amber-900">
+        1심 리뷰에 이의 신청이 {reviews.length}건 있습니다. 내용을 확인하고 2심을 개시하거나 기각해 주세요. 결정과 이유는 공개되고, 개시하면 승인 기준과 진영별 추가 인원 상한도 공개됩니다.
+        추가 배심원은 신청 마감 후 공개한 기준대로 시스템이 승인하며, 운영자가 신청자를 개별로 고르지 않습니다 (05).
+      </p>
+      <ul className="space-y-2">
+        {reviews.map((review) => (
+          <li key={review.id} className="rounded bg-white p-3 text-sm">
+            <p className="text-xs text-slate-500">
+              {review.author.user.nickname} · {SIDE_LABELS[review.author.side]} 측 · 댓글 {review._count.comments}개
+            </p>
+            <p className="whitespace-pre-wrap">{review.body}</p>
+          </li>
+        ))}
+      </ul>
+      <div className="rounded bg-white p-4">
+        <AppealDecisionForm defaultCriteria={DEFAULT_APPEAL_CRITERIA} />
+      </div>
+    </section>
+  );
+}
+
+// 03 O-04 2심 신청 현황 (승인은 신청 마감 후 시스템이 기준대로 적용)
+async function RecruitmentAdmin() {
+  const [appeal, applications] = await Promise.all([getAppealView(db, null), getApplications()]);
+  if (!appeal) return null;
+  return (
+    <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
+      <h2 className="font-semibold">2심 배심원 모집</h2>
+      <p className="text-sm text-slate-600">
+        {appeal.approvedAt
+          ? `승인 기준을 적용했습니다 (${dateFormat.format(appeal.approvedAt)}). 승인된 신청자가 모집 마감 전에 서명하면 2심 증거 제출이 시작됩니다.`
+          : `신청 마감${appeal.deadline ? `(${dateFormat.format(appeal.deadline)})` : ""}이 지나면 공개한 승인 기준이 자동으로 적용됩니다.`}
+      </p>
+      <div className="grid gap-3 text-sm sm:grid-cols-2">
+        {(["indict", "dismiss"] as const).map((side) => (
+          <p key={side} className="rounded bg-slate-50 p-3">
+            <strong>{SIDE_LABELS[side]} 측</strong> · 1심에서 이어서 {appeal.counts[side].continued}명 · 신청 {appeal.counts[side].applied}명 · 승인 {appeal.counts[side].approved}명
+          </p>
+        ))}
+      </div>
+      {applications.length > 0 && (
+        <table className="w-full text-sm">
+          <thead className="text-left text-slate-500">
+            <tr>
+              <th className="py-1">신청자</th>
+              <th>진영</th>
+              <th>결과</th>
+            </tr>
+          </thead>
+          <tbody>
+            {applications.map((a) => (
+              <tr key={a.id} className="border-t border-slate-100">
+                <td className="py-1.5">{a.user.nickname}</td>
+                <td>{SIDE_LABELS[a.requestedSide]}</td>
+                <td>{a.status === "pending" ? "대기" : a.status === "approved" ? "승인" : `미승인 · ${a.note ?? ""}`}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </section>
   );
 }

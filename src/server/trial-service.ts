@@ -5,7 +5,17 @@ import { ratio } from "@/domain/case";
 import { type JudgmentInput, checkJudgment, isNominationOpen, nominationDeadline, persuasion, tallyNominations } from "@/domain/trial";
 import { createRecommenderFromEnv } from "./ai/recommender";
 import { db } from "./db";
-import { CASE_ID, StatusConflictError, advanceDueStages, advocateCandidates, pronounceJudgment, runAdvocateRecommendations, selectAdvocates } from "./lifecycle";
+import {
+  CASE_ID,
+  StatusConflictError,
+  advanceDueStages,
+  advocateCandidates,
+  openAppeal,
+  pronounceJudgment,
+  rejectAppeal,
+  runAdvocateRecommendations,
+  selectAdvocates,
+} from "./lifecycle";
 
 export type Result = { ok: true } | { ok: false; error: string };
 
@@ -111,6 +121,42 @@ export async function pronounce(operatorId: string, input: JudgmentInput): Promi
   return { ok: true };
 }
 
+/** 03 O-03 2심 결정: 개시하면 승인 기준과 진영별 상한을 공개하고, 기각하면 1심 판결이 확정됩니다. 이유는 공개됩니다. */
+export async function decideAppeal(
+  operatorId: string,
+  input: { open: boolean; reason: string; criteria: string; perSideCap: number | null },
+): Promise<Result> {
+  const c = await db.case.findUnique({ where: { id: CASE_ID } });
+  if (c?.status !== "APPEAL_DECISION") return { ok: false, error: "2심 결정 단계가 아닙니다." };
+  if (!input.reason.trim()) return { ok: false, error: "결정 이유를 적어 주세요. 진행 기록에 공개됩니다." };
+  if (input.open) {
+    if (!input.criteria.trim()) return { ok: false, error: "추가 배심원 승인 기준을 적어 주세요." };
+    if (input.perSideCap !== null && (!Number.isInteger(input.perSideCap) || input.perSideCap < 0)) return { ok: false, error: "진영별 상한은 0 이상의 정수로 적어 주세요." };
+  }
+  try {
+    if (input.open) await openAppeal(db, operatorId, { reason: input.reason.slice(0, 1000), criteria: input.criteria.slice(0, 3000), perSideCap: input.perSideCap });
+    else await rejectAppeal(db, operatorId, input.reason.slice(0, 1000));
+  } catch (error) {
+    if (error instanceof StatusConflictError) return { ok: false, error: "이미 2심 여부를 결정했습니다." };
+    throw error;
+  }
+  return { ok: true };
+}
+
+/** 2심 결정 화면용: 이의 신청이 담긴 리뷰 */
+export async function getAppealReviews() {
+  return db.review.findMany({
+    where: { round: 1, isAppeal: true },
+    include: { author: { select: { side: true, user: { select: { nickname: true } } } }, _count: { select: { comments: true } } },
+    orderBy: { createdAt: "asc" },
+  });
+}
+
+/** 03 O-04 2심 신청 현황: 신청자, 진영, 승인 결과 */
+export async function getApplications() {
+  return db.appealApplication.findMany({ include: { user: { select: { nickname: true } } }, orderBy: { createdAt: "asc" } });
+}
+
 /** 사건 페이지의 최종 변론인 선정 · 최종 변론 · 평결 · 판결 화면용 데이터 */
 export async function getTrialView(userId: string | null) {
   const c = await db.case.findUnique({ where: { id: CASE_ID } });
@@ -133,6 +179,8 @@ export async function getTrialView(userId: string | null) {
     db.judgment.findUnique({ where: { round } }),
     db.verdictReceipt.count({ where: { round } }),
   ]);
+  // 2심이 열린 뒤에도 1심 판결은 기록으로 보여 줌 (03 C-12 1심/2심 기록)
+  const pastJudgments = round > 1 ? await db.judgment.findMany({ where: { round: { lt: round } }, orderBy: { round: "asc" } }) : [];
 
   const now = new Date();
   const nominationOpen = schedule?.startsAt && schedule.endsAt ? isNominationOpen(now, schedule.startsAt, schedule.endsAt) : false;
@@ -180,8 +228,10 @@ export async function getTrialView(userId: string | null) {
     myArgument: myAdvocate ? finalArguments.find((f) => f.advocateId === myAdvocate.id) ?? null : null,
     hasVerdict: Boolean(me?.verdictReceipt),
     verdictCount,
+    round,
     judgment,
     persuasion: judgment ? persuasion(judgment.baselineIndictRatio, judgment.verdictGuilty, judgment.verdictNotGuilty) : null,
+    pastJudgments: pastJudgments.map((j) => ({ judgment: j, persuasion: persuasion(j.baselineIndictRatio, j.verdictGuilty, j.verdictNotGuilty) })),
   };
 }
 

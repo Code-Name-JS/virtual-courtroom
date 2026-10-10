@@ -33,6 +33,13 @@ describe("진영 게시판 열람", () => {
     expect(canReadBoard("FINALIZED", guest, "indict")).toBe(false);
   });
 
+  it("2심 모집 중에는 2심 게시판이 닫혀 있고, 보관된 1심 게시판은 로그인한 회원 누구나 읽는다", () => {
+    expect(canReadBoard("APPEAL_RECRUITMENT", juror("indict"), "indict")).toBe(false);
+    expect(canReadBoard("EVIDENCE", outsider, "dismiss", true)).toBe(true);
+    expect(canReadBoard("EVIDENCE", juror("indict"), "dismiss", true)).toBe(true);
+    expect(canReadBoard("EVIDENCE", guest, "indict", true)).toBe(false);
+  });
+
   it("운영자는 증거 제출 기간에도 양측을 볼 수 있고, 게시판이 생기기 전에는 아무도 볼 수 없다", () => {
     expect(canReadBoard("EVIDENCE", operator, "dismiss")).toBe(true);
     expect(canReadBoard("PRETRIAL", operator, "indict")).toBe(false);

@@ -151,9 +151,9 @@ export async function reportPost(
   reason: "leak" | "abuse" | "other",
   detail: string,
 ): Promise<Result> {
-  const { viewer, status } = await getViewer(user);
+  const { viewer, status, round } = await getViewer(user);
   const post = await db.post.findUnique({ where: { id: postId } });
-  if (!post || !canReadBoard(status, viewer, post.side)) return { ok: false, error: "신고할 수 있는 글이 아닙니다." };
+  if (!post || !canReadBoard(status, viewer, post.side, post.round < round)) return { ok: false, error: "신고할 수 있는 글이 아닙니다." };
   if (!detail.trim()) return { ok: false, error: "신고 내용을 적어 주세요." };
   await db.report.create({ data: { reporterUserId: user.id, targetPostId: postId, reason, detail: detail.trim().slice(0, 2000) } });
   return { ok: true, value: undefined };

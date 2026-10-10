@@ -28,11 +28,12 @@ export const SIDE_LABELS: Record<Side, string> = {
 };
 
 /**
- * MVP(1심 한 바퀴)에서 일정을 갖는 단계와 기본 기간 (02 상태별 정의, 06 MVP 범위).
+ * 일정을 갖는 단계와 기본 기간 (02 상태별 정의). 운영자가 사건을 게시하기 전에 조정합니다.
  * - timed: 마감이 되면 시스템이 다음 단계로 넘김
  * - operator: 운영자가 처리해야 넘어감. 마감은 "운영자 조치 지연" 표시에만 씀 (05)
+ * 2심은 2심 배심원 모집부터 리뷰까지 1심과 같은 기간으로 다시 진행합니다 (ROUND2_STAGES).
  */
-export const MVP_STAGES = [
+export const CASE_STAGES = [
   { stage: "INDICTMENT_VOTE", kind: "timed", defaultMinutes: 7 * DAY, demoMinutes: 5 },
   { stage: "INDICTMENT_PENDING", kind: "operator", defaultMinutes: 3 * DAY, demoMinutes: 5 },
   { stage: "PRETRIAL", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 3 },
@@ -41,26 +42,44 @@ export const MVP_STAGES = [
   { stage: "FINAL_ARGUMENT", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 5 },
   { stage: "DELIBERATION", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 3 },
   { stage: "SENTENCING", kind: "operator", defaultMinutes: 3 * DAY, demoMinutes: 5 },
+  { stage: "REVIEW", kind: "timed", defaultMinutes: 7 * DAY, demoMinutes: 5 },
+  { stage: "APPEAL_DECISION", kind: "operator", defaultMinutes: 3 * DAY, demoMinutes: 5 },
+  { stage: "APPEAL_RECRUITMENT", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 6 },
 ] as const satisfies ReadonlyArray<{ stage: CaseStatus; kind: "timed" | "operator"; defaultMinutes: number; demoMinutes: number }>;
 
-export type ScheduledStage = (typeof MVP_STAGES)[number]["stage"];
+export type ScheduledStage = (typeof CASE_STAGES)[number]["stage"];
 
-/** 사건 페이지의 단계 진행 막대에 보여 줄 순서 */
-export const PROGRESS_STAGES: CaseStatus[] = [
-  "INDICTMENT_VOTE",
-  "PRETRIAL",
+/** 2심에서 다시 진행하는 단계. 공소 투표와 공판준비는 반복하지 않습니다 (02) */
+export const ROUND2_STAGES: ScheduledStage[] = [
+  "APPEAL_RECRUITMENT",
   "EVIDENCE",
   "ADVOCATE_SELECTION",
   "FINAL_ARGUMENT",
   "DELIBERATION",
   "SENTENCING",
-  "FINALIZED",
+  "REVIEW",
 ];
 
-export function progressIndex(status: CaseStatus): number {
-  if (status === "INDICTMENT_PENDING") return PROGRESS_STAGES.indexOf("INDICTMENT_VOTE");
-  if (status === "DISMISSED") return PROGRESS_STAGES.indexOf("INDICTMENT_VOTE");
-  return PROGRESS_STAGES.indexOf(status);
+export function stageKind(status: CaseStatus): "timed" | "operator" | null {
+  return CASE_STAGES.find((s) => s.stage === status)?.kind ?? null;
+}
+
+/** 사건 페이지의 단계 진행 막대에 보여 줄 순서 */
+export function progressStages(round: number): CaseStatus[] {
+  const trial: CaseStatus[] = ["EVIDENCE", "ADVOCATE_SELECTION", "FINAL_ARGUMENT", "DELIBERATION", "SENTENCING", "REVIEW", "FINALIZED"];
+  return round === 1 ? ["INDICTMENT_VOTE", "PRETRIAL", ...trial] : ["APPEAL_RECRUITMENT", ...trial];
+}
+
+export function progressIndex(status: CaseStatus, round: number): number {
+  const stages = progressStages(round);
+  if (status === "INDICTMENT_PENDING" || status === "DISMISSED") return stages.indexOf("INDICTMENT_VOTE");
+  if (status === "APPEAL_DECISION") return stages.indexOf("REVIEW");
+  return stages.indexOf(status);
+}
+
+/** 심급 이름 */
+export function roundLabel(round: number): string {
+  return `${round}심`;
 }
 
 // 01: 사건의 최소 참여 인원은 50명. 시연 모드에서만 더 적게 설정할 수 있음 (06 시연 모드)
@@ -70,7 +89,7 @@ export type DurationInput = Record<ScheduledStage, number>;
 
 /** 기본 기간(분). 시연 모드에서는 흐름을 빠르게 확인할 수 있도록 몇 분 단위 */
 export function defaultDurations(demoMode = false): DurationInput {
-  return Object.fromEntries(MVP_STAGES.map((s) => [s.stage, demoMode ? s.demoMinutes : s.defaultMinutes])) as DurationInput;
+  return Object.fromEntries(CASE_STAGES.map((s) => [s.stage, demoMode ? s.demoMinutes : s.defaultMinutes])) as DurationInput;
 }
 
 export type CaseSettingsCheck = { ok: true } | { ok: false; error: string };
@@ -88,7 +107,7 @@ export function checkCaseSettings(
     return { ok: false, error: "최대 참여 인원은 최소 참여 인원보다 적을 수 없습니다." };
   }
   const minMinutes = demoMode ? 1 : DAY;
-  for (const { stage } of MVP_STAGES) {
+  for (const { stage } of CASE_STAGES) {
     const minutes = input.durations[stage];
     if (!Number.isInteger(minutes) || minutes < minMinutes) {
       return { ok: false, error: `${STATUS_LABELS[stage]} 기간은 ${demoMode ? "1분" : "1일"} 이상이어야 합니다.` };
@@ -119,6 +138,8 @@ export function ratio(part: number, total: number): number {
   return total === 0 ? 0 : Math.round((part / total) * 1000) / 10;
 }
 
+export type AppealTodo = "choose" | "joined" | "declined" | "can_apply" | "applied" | "needs_signature" | "signed" | "rejected";
+
 /** 03 C-01 사건 페이지 맨 위의 "지금 할 일" */
 export function todoFor(input: {
   status: CaseStatus;
@@ -134,6 +155,11 @@ export function todoFor(input: {
     hasVerdict: boolean;
     advocatesSelected: boolean;
   };
+  round?: number;
+  /** 리뷰 기간: 리뷰를 쓸 수 있는지, 이미 썼는지 */
+  review?: "can_write" | "written" | null;
+  /** 2심 배심원 모집: 이 사용자가 할 수 있는 일 */
+  appeal?: AppealTodo | null;
 }): string {
   const active = input.participationStatus === "signed" || input.participationStatus === "advocate";
   const trial = input.trial;
@@ -174,6 +200,46 @@ export function todoFor(input: {
       return "배심원들이 비공개로 평결하고 있습니다.";
     case "SENTENCING":
       return input.isOperator ? "평결을 참고해 판결을 작성하고 선고해 주세요." : "운영자가 판결을 작성하고 있습니다.";
+    case "REVIEW": {
+      const round = input.round ?? 1;
+      if (input.isOperator) return round === 1 ? "배심원들이 리뷰를 쓰고 있습니다. 리뷰 기간이 끝나면 이의 신청이 있는지에 따라 확정 또는 2심 결정으로 넘어갑니다." : "배심원들이 2심 리뷰를 쓰고 있습니다. 리뷰 기간이 끝나면 판결이 확정됩니다.";
+      if (input.review === "written") return "리뷰를 남겼습니다. 리뷰 기간이 끝나기 전까지는 고칠 수 있습니다.";
+      if (input.review === "can_write") {
+        return round === 1
+          ? "판결이 선고되었습니다. 리뷰를 쓰고, 판결에 이의가 있으면 이의 신청을 함께 표시해 주세요."
+          : "2심 판결이 선고되었습니다. 리뷰를 남겨 주세요. 2심 판결에는 항소할 수 없습니다.";
+      }
+      if (!input.loggedIn) return "판결이 선고되었습니다. 로그인하면 배심원들의 리뷰를 읽을 수 있습니다.";
+      return round === 1
+        ? "판결이 선고되었습니다. 배심원들의 리뷰에 댓글을 남길 수 있습니다. 1심 리뷰에 댓글을 단 회원은 2심이 열리면 참여를 신청할 수 있습니다."
+        : "2심 판결이 선고되었습니다. 배심원들의 리뷰에 댓글을 남길 수 있습니다.";
+    }
+    case "APPEAL_DECISION":
+      return input.isOperator
+        ? "이의 신청이 담긴 리뷰를 확인하고 2심 개시 또는 기각을 결정해 주세요."
+        : "이의 신청이 있어 운영자가 2심 개시 여부를 결정하고 있습니다. 결정 전까지 1심 리뷰에 댓글을 남길 수 있습니다.";
+    case "APPEAL_RECRUITMENT":
+      if (input.isOperator) return "2심 배심원을 모집하고 있습니다. 신청 마감 후 공개한 승인 기준이 자동으로 적용되고, 모집이 끝나면 2심 증거 제출이 시작됩니다.";
+      switch (input.appeal) {
+        case "choose":
+          return "2심에 참여할지 선택해 주세요. 참여하면 1심 진영을 그대로 유지합니다.";
+        case "joined":
+          return "2심에 참여하기로 했습니다. 모집이 끝나면 2심 증거 제출이 시작됩니다.";
+        case "declined":
+          return "2심에 참여하지 않기로 했습니다.";
+        case "can_apply":
+          return "2심 추가 배심원으로 참여를 신청할 수 있습니다. 신청할 때 진영을 고릅니다.";
+        case "applied":
+          return "2심 참여를 신청했습니다. 신청 마감 후 승인 기준이 적용되고 결과가 공개됩니다.";
+        case "needs_signature":
+          return "2심 추가 배심원으로 승인되었습니다. 모집 마감 전에 공판준비절차 서명을 해 주세요. 서명하지 않으면 참여할 수 없습니다.";
+        case "signed":
+          return "서명을 마쳤습니다. 모집이 끝나면 2심 증거 제출이 시작됩니다.";
+        case "rejected":
+          return "이번 2심 추가 배심원으로 승인되지 않았습니다. 승인 결과는 사건 페이지에 공개되어 있습니다.";
+        default:
+          return "2심 배심원을 모집하고 있습니다. 모집이 끝나면 2심 증거 제출이 시작됩니다.";
+      }
     case "FINALIZED":
       return "판결이 확정되었습니다. 판결과 설득 지표를 확인해 보세요.";
     default:

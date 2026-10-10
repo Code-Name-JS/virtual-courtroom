@@ -1,6 +1,8 @@
 // 02 사건 생애주기의 상태 전환. 웹 앱과 워커(worker/index.ts)가 함께 쓰므로 Next.js 전용 모듈을 가져오지 않습니다.
 import type { ActorType, CaseDecision, CaseStatus, JudgmentOutcome, ParticipationStatus, Prisma, PrismaClient, SentenceType, Side } from "@prisma/client";
-import { SIDE_LABELS, ratio, resolveIndictmentVote } from "@/domain/case";
+import { randomInt } from "node:crypto";
+import { allocateAppealSeats, applicationDeadline, checkApplicantEligibility, round2Baseline } from "@/domain/appeal";
+import { CASE_STAGES, ROUND2_STAGES, SIDE_LABELS, ratio, resolveIndictmentVote } from "@/domain/case";
 import { OUTCOME_LABELS, SENTENCE_LABELS, nominationDeadline, pickByVotes, pickEarliestSigned } from "@/domain/trial";
 import { type AdvocateRecommender, buildPrompt, parseRecommendation } from "./ai/recommender";
 
@@ -67,7 +69,7 @@ type NotifyOptions = {
   link?: string;
 };
 
-async function notifyParticipants(tx: Tx, round: number, type: string, message: string, options: NotifyOptions = {}): Promise<void> {
+export async function notifyParticipants(tx: Tx, round: number, type: string, message: string, options: NotifyOptions = {}): Promise<void> {
   const participants = await tx.participation.findMany({
     where: { round, ...(options.statuses ? { status: { in: options.statuses } } : {}) },
     select: { userId: true },
@@ -418,9 +420,22 @@ async function closeDeliberation(tx: Tx, round: number, now: Date): Promise<stri
   return reason;
 }
 
+/** 설득 지표의 기준 (04 judgment): 1심은 공소 투표의 공소 제기 득표율, 2심은 2심이 시작될 때 공소 제기 측 인원 비율 */
+async function baselineIndictRatio(tx: Tx, round: number): Promise<number> {
+  if (round === 1) {
+    const votes = await tx.indictmentVote.groupBy({ by: ["choice"], _count: true });
+    const indict = votes.find((v) => v.choice === "indict")?._count ?? 0;
+    const dismiss = votes.find((v) => v.choice === "dismiss")?._count ?? 0;
+    return ratio(indict, indict + dismiss);
+  }
+  // 2심을 시작할 때 서명을 마친 사람 (이후 제재로 제외된 사람도 시작 인원에 포함)
+  const started = await tx.participation.groupBy({ by: ["side"], where: { round, signedAt: { not: null } }, _count: true });
+  return round2Baseline(started.find((s) => s.side === "indict")?._count ?? 0, started.find((s) => s.side === "dismiss")?._count ?? 0);
+}
+
 /**
  * 운영자의 판결 선고 (01: 평결을 참고해 무죄 또는 유죄로 선고하고 이유를 제공).
- * MVP(06 결정 2)에서는 리뷰와 2심 없이 1심 판결이 곧 확정됩니다.
+ * 선고하면 리뷰 기간이 시작됩니다. 1심 리뷰에서는 이의(항소) 신청을 받고, 2심 리뷰는 피드백으로만 받습니다 (02).
  */
 export async function pronounceJudgment(
   db: PrismaClient,
@@ -430,9 +445,6 @@ export async function pronounceJudgment(
 ): Promise<void> {
   await db.$transaction(async (tx) => {
     const current = await tx.case.findUniqueOrThrow({ where: { id: CASE_ID } });
-    const votes = await tx.indictmentVote.groupBy({ by: ["choice"], _count: true });
-    const indict = votes.find((v) => v.choice === "indict")?._count ?? 0;
-    const dismiss = votes.find((v) => v.choice === "dismiss")?._count ?? 0;
     const ballots = await tx.verdictBallot.groupBy({ by: ["choice"], where: { round: current.round }, _count: true });
     const guilty = ballots.find((b) => b.choice === "guilty")?._count ?? 0;
     const notGuilty = ballots.find((b) => b.choice === "not_guilty")?._count ?? 0;
@@ -445,7 +457,7 @@ export async function pronounceJudgment(
         sentenceType: sentenced ? input.sentenceType : null,
         sentenceDetail: sentenced ? input.sentenceDetail.trim() : null,
         reasoning: input.reasoning.trim(),
-        baselineIndictRatio: ratio(indict, indict + dismiss),
+        baselineIndictRatio: await baselineIndictRatio(tx, current.round),
         verdictGuilty: guilty,
         verdictNotGuilty: notGuilty,
         pronouncedBy: operatorId,
@@ -453,24 +465,240 @@ export async function pronounceJudgment(
       },
     });
     const sentence = sentenced ? ` (${SENTENCE_LABELS[input.sentenceType!]} ${input.sentenceDetail.trim()})` : "";
-    const reason = `운영자가 판결을 선고했습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. 배심원 평결 유죄 ${guilty}표, 무죄 ${notGuilty}표.`;
+    const roundName = current.round === 1 ? "" : "2심 ";
+    const reason = `운영자가 ${roundName}판결을 선고했습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. 배심원 평결 유죄 ${guilty}표, 무죄 ${notGuilty}표. 리뷰 기간이 시작됩니다.`;
     await transition(tx, {
       round: current.round,
       from: "SENTENCING",
-      to: "FINALIZED",
+      to: "REVIEW",
       actorType: "operator",
       actorUserId: operatorId,
       decision: "pronounce",
       reason,
       now,
     });
+    const reviewGuide =
+      current.round === 1
+        ? "리뷰 기간에 리뷰를 쓰고, 판결에 이의가 있으면 이의 신청을 함께 표시할 수 있습니다. 이의 신청이 있으면 운영자가 2심 개시 여부를 결정합니다."
+        : "리뷰 기간에 리뷰를 남겨 주세요. 2심 판결에는 항소할 수 없습니다.";
     await notifyParticipants(
       tx,
       current.round,
       "judgment_pronounced",
-      `판결이 선고되었습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. 사건 페이지에서 선고 이유와 설득 지표를 확인해 보세요.`,
+      `${roundName}판결이 선고되었습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. ${reviewGuide}`,
+      { statuses: ACTIVE },
     );
   });
+}
+
+/**
+ * 리뷰 마감 (02 상태별 정의 11).
+ * - 1심: 이의 신청이 담긴 리뷰가 있으면 2심 결정, 없으면 확정
+ * - 2심: 3심은 없으므로 확정
+ */
+async function closeReview(tx: Tx, round: number, now: Date): Promise<string> {
+  const appeals = round === 1 ? await tx.review.count({ where: { round, isAppeal: true } }) : 0;
+  if (appeals > 0) {
+    const reason = `리뷰 마감. 이의 신청이 담긴 리뷰가 ${appeals}건 있어 운영자가 2심 개시 여부를 결정합니다.`;
+    await transition(tx, { round, from: "REVIEW", to: "APPEAL_DECISION", actorType: "system", reason, now });
+    await notifyParticipants(tx, round, "review_closed", `${reason} 결정 전까지 1심 리뷰에 댓글을 남길 수 있습니다.`, { statuses: ACTIVE });
+    return reason;
+  }
+  const reason = round === 1 ? "리뷰 마감. 이의 신청이 없어 1심 판결이 확정되었습니다." : "2심 리뷰 마감. 2심 판결이 확정되었습니다.";
+  await transition(tx, { round, from: "REVIEW", to: "FINALIZED", actorType: "system", reason, now });
+  await notifyParticipants(tx, round, "case_finalized", `${reason} 사건이 끝나 사이트는 운영자가 공지한 일시에 폐쇄됩니다.`, { statuses: ACTIVE });
+  return reason;
+}
+
+/**
+ * 운영자의 2심 개시 (02 상태별 정의 12, 05 운영자 권한과 투명성).
+ * 승인 기준과 진영별 추가 인원 상한을 공개하고, 2심 배심원 모집을 시작합니다. 2심 단계 기간은 게시 전에 정한 기간을 그대로 씁니다.
+ */
+export async function openAppeal(
+  db: PrismaClient,
+  operatorId: string,
+  input: { reason: string; criteria: string; perSideCap: number | null },
+  now = new Date(),
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const round1 = await tx.stageSchedule.findMany({ where: { round: 1 } });
+    for (const stage of ROUND2_STAGES) {
+      const durationMinutes = round1.find((s) => s.stage === stage)?.durationMinutes ?? CASE_STAGES.find((s) => s.stage === stage)!.defaultMinutes;
+      await tx.stageSchedule.upsert({
+        where: { round_stage: { round: 2, stage } },
+        create: { round: 2, stage, durationMinutes },
+        update: { durationMinutes, startsAt: null, endsAt: null },
+      });
+    }
+    await tx.case.update({ where: { id: CASE_ID }, data: { round: 2, appealCriteria: input.criteria.trim(), appealSideCap: input.perSideCap } });
+    const cap = input.perSideCap === null ? "상한 없음" : `진영별 최대 ${input.perSideCap}명`;
+    await transition(tx, {
+      round: 2,
+      from: "APPEAL_DECISION",
+      to: "APPEAL_RECRUITMENT",
+      actorType: "operator",
+      actorUserId: operatorId,
+      decision: "open_appeal",
+      reason: `운영자가 2심을 개시했습니다. 이유: ${input.reason.trim()} 2심 배심원 모집을 시작합니다 (추가 배심원 ${cap}).`,
+      now,
+    });
+
+    const schedule = await tx.stageSchedule.findUniqueOrThrow({ where: { round_stage: { round: 2, stage: "APPEAL_RECRUITMENT" } } });
+    const deadline = applicationDeadline(schedule.startsAt!, schedule.endsAt!);
+    const when = deadline.toLocaleString("ko-KR", { timeZone: "Asia/Seoul", dateStyle: "long", timeStyle: "short" });
+    await tx.notice.create({
+      data: {
+        title: "2심 개시와 추가 배심원 승인 기준",
+        body: [
+          `운영자가 2심을 개시했습니다. 이유: ${input.reason.trim()}`,
+          `1심 배심원은 ${when}까지 사건 페이지에서 2심 참여 여부를 선택해 주세요. 참여하면 1심 진영을 그대로 유지합니다.`,
+          `1심 리뷰에 댓글을 단 회원은 ${when}까지 진영을 골라 2심 참여를 신청할 수 있습니다. 추가 배심원: ${cap}.`,
+          `승인 기준\n${input.criteria.trim()}`,
+        ].join("\n\n"),
+        authorUserId: operatorId,
+        isPinned: true,
+        publishedAt: now,
+      },
+    });
+
+    await notifyParticipants(tx, 1, "appeal_opened", `2심이 열렸습니다. ${when}까지 사건 페이지에서 2심 참여 여부를 선택해 주세요. 참여하면 1심 진영을 그대로 유지합니다.`, {
+      statuses: ACTIVE,
+      sendEmail: true,
+    });
+    // 1심 리뷰 댓글 작성자 중 1심에 참여하지 않은 회원 (05 승인 기준 1. 자격)
+    const commenters = await tx.reviewComment.findMany({
+      where: { review: { round: 1 }, author: { role: "member", participations: { none: { round: 1 } } } },
+      distinct: ["authorUserId"],
+      select: { authorUserId: true },
+    });
+    if (commenters.length > 0) {
+      await tx.notification.createMany({
+        data: commenters.map((c) => ({
+          userId: c.authorUserId,
+          type: "appeal_opened",
+          payload: { message: `2심이 열렸습니다. 1심 리뷰에 댓글을 단 회원은 ${when}까지 진영을 골라 2심 참여를 신청할 수 있습니다.` },
+          link: "/case",
+          sendEmail: true,
+        })),
+      });
+    }
+  });
+}
+
+/** 운영자의 2심 기각: 1심 판결이 확정됩니다. 이유는 공개됩니다. */
+export async function rejectAppeal(db: PrismaClient, operatorId: string, reason: string, now = new Date()): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const message = `운영자가 2심을 기각했습니다. 1심 판결이 확정되었습니다. 이유: ${reason.trim()}`;
+    await transition(tx, { round: 1, from: "APPEAL_DECISION", to: "FINALIZED", actorType: "operator", actorUserId: operatorId, decision: "reject_appeal", reason: message, now });
+    await notifyParticipants(tx, 1, "case_finalized", `${message} 사건이 끝나 사이트는 운영자가 공지한 일시에 폐쇄됩니다.`, { statuses: ACTIVE });
+  });
+}
+
+function secureRandom(): number {
+  return randomInt(0, 2 ** 32) / 2 ** 32;
+}
+
+/**
+ * 2심 추가 배심원 신청 마감 후 05 승인 기준을 기계적으로 적용합니다 (한 번만).
+ * 운영자는 신청자를 개별로 고르지 않고, 진영별 신청·승인 인원과 추첨 결과는 진행 기록에 공개됩니다.
+ */
+export async function applyAppealApprovals(tx: Tx, now: Date, random: () => number = secureRandom): Promise<string | null> {
+  const marked = await tx.case.updateMany({ where: { id: CASE_ID, status: "APPEAL_RECRUITMENT", appealApprovedAt: null }, data: { appealApprovedAt: now } });
+  if (marked.count !== 1) return null;
+  const current = await tx.case.findUniqueOrThrow({ where: { id: CASE_ID } });
+
+  const applications = await tx.appealApplication.findMany({
+    where: { status: "pending" },
+    include: {
+      user: {
+        select: {
+          nickname: true,
+          role: true,
+          emailVerifiedAt: true,
+          _count: { select: { sanctions: true, reviewComments: { where: { review: { round: 1 } } } } },
+          participations: { where: { round: 1 }, select: { status: true } },
+        },
+      },
+    },
+    orderBy: { createdAt: "asc" },
+  });
+  const applicants = applications.map((a) => ({
+    id: a.id,
+    side: a.requestedSide,
+    eligible: checkApplicantEligibility({
+      isOperator: a.user.role === "operator",
+      emailVerified: Boolean(a.user.emailVerifiedAt),
+      hasRound1Comment: a.user._count.reviewComments > 0,
+      sanctionCount: a.user._count.sanctions,
+      round1Status: a.user.participations[0]?.status ?? null,
+    }).ok,
+  }));
+  const continued = await tx.participation.count({ where: { round: 2, joinedVia: "continued", status: { not: "excluded" } } });
+  const allocation = allocateAppealSeats({
+    applicants,
+    perSideCap: current.appealSideCap,
+    remainingCapacity: current.maxParticipants === null ? null : current.maxParticipants - continued,
+    random,
+  });
+
+  for (const id of allocation.approved) {
+    const application = applications.find((a) => a.id === id)!;
+    await tx.appealApplication.update({ where: { id }, data: { status: "approved", reviewedAt: now, note: "승인 기준에 따라 승인" } });
+    await tx.participation.create({ data: { userId: application.userId, round: 2, side: application.requestedSide, joinedVia: "appeal_application", status: "voted" } });
+  }
+  for (const { id, reason } of allocation.rejected) {
+    await tx.appealApplication.update({ where: { id }, data: { status: "rejected", reviewedAt: now, note: reason } });
+  }
+
+  const approvedNames = (side: Side) =>
+    applications.filter((a) => a.requestedSide === side && allocation.approved.includes(a.id)).map((a) => a.user.nickname);
+  const sideSummary = SIDES.map((side) => {
+    const c = allocation.counts[side];
+    const names = approvedNames(side);
+    return `${SIDE_LABELS[side]} 측 신청 ${c.applied}명(자격 ${c.eligible}명) 중 ${names.length}명 승인${names.length ? ` (${names.join(", ")})` : ""}`;
+  }).join(", ");
+  const drew = SIDES.some((side) => allocation.counts[side].eligible > allocation.perSide && allocation.perSide > 0);
+  const reason = `2심 추가 배심원 신청 마감. 공개한 승인 기준을 적용했습니다: ${sideSummary}. 진영별 ${allocation.perSide}명씩${drew ? ", 신청자가 많은 진영은 무작위 추첨" : ""}. 승인된 신청자는 모집 마감 전에 서명해야 참여할 수 있습니다.`;
+  await tx.caseEvent.create({ data: { round: 2, actorType: "system", reason, createdAt: now } });
+
+  const approvedUsers = applications.filter((a) => allocation.approved.includes(a.id)).map((a) => a.userId);
+  if (approvedUsers.length > 0) {
+    await tx.notification.createMany({
+      data: approvedUsers.map((userId) => ({
+        userId,
+        type: "appeal_application_approved",
+        payload: { message: "2심 추가 배심원으로 승인되었습니다. 모집 마감 전에 사건 페이지에서 공판준비절차 서명을 해 주세요. 서명하지 않으면 참여할 수 없습니다." },
+        link: "/case",
+        sendEmail: true,
+      })),
+    });
+  }
+  if (allocation.rejected.length > 0) {
+    await tx.notification.createMany({
+      data: allocation.rejected.map(({ id, reason: why }) => ({
+        userId: applications.find((a) => a.id === id)!.userId,
+        type: "appeal_application_rejected",
+        payload: { message: `2심 추가 배심원으로 승인되지 않았습니다. 사유: ${why}` },
+        link: "/case",
+      })),
+    });
+  }
+  return reason;
+}
+
+/** 2심 배심원 모집 마감: 서명하지 않은 승인자는 제외하고 2심 증거 제출을 시작합니다 (02: 공소 투표와 공판준비는 반복하지 않음). */
+async function closeAppealRecruitment(tx: Tx, now: Date): Promise<string> {
+  await applyAppealApprovals(tx, now);
+  const unsigned = await tx.participation.updateMany({ where: { round: 2, status: "voted" }, data: { status: "excluded", excludedReason: "unsigned" } });
+  const counts = await tx.participation.groupBy({ by: ["side"], where: { round: 2, status: { in: ACTIVE } }, _count: true });
+  const indict = counts.find((c) => c.side === "indict")?._count ?? 0;
+  const dismiss = counts.find((c) => c.side === "dismiss")?._count ?? 0;
+  const reason = `2심 배심원 모집 마감. ${SIDE_LABELS.indict} 측 ${indict}명, ${SIDE_LABELS.dismiss} 측 ${dismiss}명으로 2심 증거 제출을 시작합니다 (2심 설득 지표의 기준: ${SIDE_LABELS.indict} 측 ${round2Baseline(indict, dismiss)}%).${unsigned.count > 0 ? ` 서명하지 않은 승인자 ${unsigned.count}명은 참여하지 않습니다.` : ""} 1심 게시판은 읽기 전용으로 보관됩니다.`;
+  await transition(tx, { round: 2, from: "APPEAL_RECRUITMENT", to: "EVIDENCE", actorType: "system", reason, now });
+  await notifyParticipants(tx, 2, "evidence_started", "2심 증거 제출이 시작되었습니다. 2심 진영 게시판에 생각과 증거자료를 담은 스레드를 써 주세요. 이 기간에는 자기 측 2심 게시판만 볼 수 있습니다.", {
+    statuses: ACTIVE,
+  });
+  return reason;
 }
 
 export type AdvanceOptions = {
@@ -483,7 +711,7 @@ export type AdvanceOptions = {
 
 /**
  * 마감이 지난 단계를 다음 단계로 넘깁니다. 워커가 1분마다 부르고, 사건 페이지를 열 때도 부릅니다.
- * 운영자가 처리해야 하는 단계(공소 제기 대기, 판결 작성)는 마감이 지나도 넘기지 않습니다.
+ * 운영자가 처리해야 하는 단계(공소 제기 대기, 판결 작성, 2심 결정)는 마감이 지나도 넘기지 않습니다.
  */
 export async function advanceDueStages(db: PrismaClient, now = new Date(), options: AdvanceOptions = {}): Promise<string[]> {
   const log: string[] = [];
@@ -495,6 +723,12 @@ export async function advanceDueStages(db: PrismaClient, now = new Date(), optio
   }
 
   const schedule = await db.stageSchedule.findUnique({ where: { round_stage: { round: current.round, stage: current.status } } });
+
+  // 2심 신청 마감(모집 기간의 절반)이 지나면 승인 기준을 적용
+  if (current.status === "APPEAL_RECRUITMENT" && !current.appealApprovedAt && schedule?.startsAt && schedule.endsAt && now >= applicationDeadline(schedule.startsAt, schedule.endsAt)) {
+    const approved = await db.$transaction((tx) => applyAppealApprovals(tx, now));
+    if (approved) log.push(approved);
+  }
   if (!schedule?.endsAt || schedule.endsAt > now) return log;
 
   try {
@@ -510,6 +744,10 @@ export async function advanceDueStages(db: PrismaClient, now = new Date(), optio
       log.push(await db.$transaction((tx) => closeFinalArgument(tx, current.round, now)));
     } else if (current.status === "DELIBERATION") {
       log.push(await db.$transaction((tx) => closeDeliberation(tx, current.round, now)));
+    } else if (current.status === "REVIEW") {
+      log.push(await db.$transaction((tx) => closeReview(tx, current.round, now)));
+    } else if (current.status === "APPEAL_RECRUITMENT") {
+      log.push(await db.$transaction((tx) => closeAppealRecruitment(tx, now)));
     }
   } catch (error) {
     // 다른 프로세스가 먼저 처리한 경우

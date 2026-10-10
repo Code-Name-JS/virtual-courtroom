@@ -63,7 +63,10 @@ describe("검수 체크리스트와 진행 막대", () => {
   });
 
   it("공소 제기 대기와 폐기는 공소 투표 칸에 표시한다", () => {
-    expect(progressIndex("INDICTMENT_PENDING")).toBe(progressIndex("INDICTMENT_VOTE"));
-    expect(progressIndex("DISMISSED")).toBe(0);
+    expect(progressIndex("INDICTMENT_PENDING", 1)).toBe(progressIndex("INDICTMENT_VOTE", 1));
+    expect(progressIndex("DISMISSED", 1)).toBe(0);
+    expect(progressIndex("APPEAL_DECISION", 1)).toBe(progressIndex("REVIEW", 1));
+    expect(progressIndex("APPEAL_RECRUITMENT", 2)).toBe(0);
+    expect(progressIndex("EVIDENCE", 2)).toBe(1);
   });
 });

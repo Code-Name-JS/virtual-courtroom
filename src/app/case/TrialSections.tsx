@@ -7,7 +7,10 @@ import { FinalArgumentForm, NominationForm, VerdictForm } from "./TrialForms";
 type TrialView = NonNullable<Awaited<ReturnType<typeof getTrialView>>>;
 
 const SIDES: Side[] = ["indict", "dismiss"];
-const AFTER_SELECTION: CaseStatus[] = ["FINAL_ARGUMENT", "DELIBERATION", "SENTENCING", "REVIEW", "APPEAL_DECISION", "APPEAL_RECRUITMENT", "FINALIZED"];
+// 2심 배심원 모집 중에는 2심의 변론 기록이 아직 없으므로 뺌 (1심 기록은 사건 페이지의 "1심 기록"에)
+const AFTER_SELECTION: CaseStatus[] = ["FINAL_ARGUMENT", "DELIBERATION", "SENTENCING", "REVIEW", "APPEAL_DECISION", "FINALIZED"];
+/** 이번 심급의 판결을 보여 주는 상태 */
+const JUDGMENT_VISIBLE: CaseStatus[] = ["REVIEW", "APPEAL_DECISION", "FINALIZED"];
 const SELECTED_BY = { operator: "운영자 선정", ai_default: "운영자가 기한 안에 선정하지 않아 AI 추천으로 확정", vote_default: "추천 표가 가장 많은 후보로 확정" } as const;
 const timeFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Seoul" });
 
@@ -29,7 +32,9 @@ export function TrialSections({ status, trial, isOperator }: { status: CaseStatu
   const showSelection = status === "ADVOCATE_SELECTION" || AFTER_SELECTION.includes(status);
   return (
     <>
-      {status === "FINALIZED" && trial.judgment && <JudgmentSection trial={trial} />}
+      {JUDGMENT_VISIBLE.includes(status) && trial.judgment && trial.persuasion && (
+        <JudgmentSection judgment={trial.judgment} persuasion={trial.persuasion} round={trial.round} status={status} />
+      )}
 
       {status === "DELIBERATION" && (
         <Section title="배심원 평결">
@@ -111,7 +116,7 @@ export function TrialSections({ status, trial, isOperator }: { status: CaseStatu
                       ) : trial.activeCounts[side] === 0 ? (
                         <p className="text-slate-500">참여 중인 배심원이 없습니다.</p>
                       ) : (
-                        <p className="text-slate-500">AI 추천을 기다리고 있습니다.</p>
+                        <p className="text-slate-500">{status === "ADVOCATE_SELECTION" ? "AI 추천을 기다리고 있습니다." : "AI 추천 없음"}</p>
                       )}
                     </div>
                     {advocate && (
@@ -138,17 +143,25 @@ export function TrialSections({ status, trial, isOperator }: { status: CaseStatu
   );
 }
 
+type Judgment = TrialView["judgment"] & {};
+type Persuasion = TrialView["persuasion"] & {};
+
+const AFTER_JUDGMENT: Partial<Record<CaseStatus, string>> = {
+  REVIEW: "리뷰 기간입니다. 배심원들의 리뷰와 댓글은 리뷰 페이지에서 볼 수 있습니다.",
+  APPEAL_DECISION: "이의 신청이 있어 운영자가 2심 개시 여부를 결정하고 있습니다.",
+  FINALIZED: "판결이 확정되었습니다. 사건이 끝나 사이트는 운영자가 공지한 일시에 폐쇄됩니다.",
+};
+
 // 03 C-10 판결 결과와 설득 지표
-function JudgmentSection({ trial }: { trial: TrialView }) {
-  const judgment = trial.judgment!;
-  const p = trial.persuasion!;
+export function JudgmentSection({ judgment, persuasion: p, round, status, compact = false }: { judgment: Judgment; persuasion: Persuasion; round: number; status?: CaseStatus; compact?: boolean }) {
+  const baselineLabel = round === 1 ? "공소 제기" : "2심 시작 시 공소 제기 측";
   return (
-    <section className="space-y-5 rounded-lg border-2 border-navy-900 bg-white p-6">
+    <section className={`space-y-5 rounded-lg bg-white p-6 ${compact ? "border border-slate-200" : "border-2 border-navy-900"}`}>
       <div className="space-y-1">
-        <p className="text-sm font-semibold text-slate-500">판결</p>
-        <p className="text-3xl font-bold">
+        <p className="text-sm font-semibold text-slate-500">{round === 1 ? "1심 판결" : "2심 판결"}</p>
+        <p className={compact ? "text-xl font-bold" : "text-3xl font-bold"}>
           {OUTCOME_LABELS[judgment.outcome]}
-          {judgment.sentenceType && <span className="ml-2 text-xl">· {SENTENCE_LABELS[judgment.sentenceType]} {judgment.sentenceDetail}</span>}
+          {judgment.sentenceType && <span className={compact ? "ml-2 text-base" : "ml-2 text-xl"}>· {SENTENCE_LABELS[judgment.sentenceType]} {judgment.sentenceDetail}</span>}
         </p>
       </div>
       <div className="space-y-1">
@@ -158,18 +171,21 @@ function JudgmentSection({ trial }: { trial: TrialView }) {
       <div className="space-y-3 rounded bg-slate-50 p-4">
         <p className="text-sm font-semibold">설득 지표</p>
         <p className="text-lg">
-          공소 제기 <strong>{p.baselineIndictRatio}%</strong> → 유죄 평결 <strong>{p.guiltyRatio}%</strong>
+          {baselineLabel} <strong>{p.baselineIndictRatio}%</strong> → 유죄 평결 <strong>{p.guiltyRatio}%</strong>
         </p>
         <p className="text-sm text-slate-700">
           {p.persuadedSide
             ? `${SIDE_LABELS[p.persuadedSide]} 측의 주장과 증거가 배심원 ${Math.abs(p.deltaPoints)}%p를 설득했습니다.`
-            : "처음 공소 투표와 평결의 비율이 같습니다."}
+            : "처음 비율과 평결의 비율이 같습니다."}
         </p>
         <p className="text-xs text-slate-500">
-          평결 유죄 {judgment.verdictGuilty}표 · 무죄 {judgment.verdictNotGuilty}표. 처음 공소 투표의 공소 제기 비율과 비공개 평결의 유죄 비율을 비교한 값입니다.
+          평결 유죄 {judgment.verdictGuilty}표 · 무죄 {judgment.verdictNotGuilty}표.{" "}
+          {round === 1
+            ? "처음 공소 투표의 공소 제기 비율과 비공개 평결의 유죄 비율을 비교한 값입니다."
+            : "2심이 시작될 때 공소 제기 측 배심원의 비율과 비공개 평결의 유죄 비율을 비교한 값입니다."}
         </p>
       </div>
-      <p className="text-sm text-slate-600">판결이 확정되었습니다. 사건이 끝나 사이트는 운영자가 공지한 일시에 폐쇄됩니다.</p>
+      {status && AFTER_JUDGMENT[status] && <p className="text-sm text-slate-600">{AFTER_JUDGMENT[status]}</p>}
     </section>
   );
 }
