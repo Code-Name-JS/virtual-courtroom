@@ -3,9 +3,14 @@ import { MIN_PARTICIPANTS, MVP_STAGES, STATUS_LABELS, defaultDurations } from "@
 import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
 import { db } from "@/server/db";
+import { advanceDueStages } from "@/server/lifecycle";
 import { env } from "@/server/env";
 import { CaseForm, type CaseFormValues } from "./CaseForm";
 import { IndictForm } from "./IndictForm";
+import { AdvocateSelectForm, JudgmentForm } from "./TrialAdminForms";
+import { requestAiAction } from "./actions";
+import { getSelectionView, getSentencingView, getTrialView } from "@/server/trial-service";
+import { SIDE_LABELS } from "@/domain/case";
 
 export const metadata = { title: "사건 관리 · Virtual Courtroom" };
 
@@ -19,6 +24,8 @@ function toKstInput(date: Date | null): string {
 // 03 O-02 사건 생성 · 검수 / O-03 사건 관리
 export default async function AdminCasePage() {
   await requireOperator();
+  // 워커가 없어도 마감이 지난 단계가 넘어가도록 (사건 페이지와 같은 방식)
+  await advanceDueStages(db);
   const current = await getCase();
   const schedules = await db.stageSchedule.findMany({ where: { round: 1 } });
   const unit = env.demoMode ? 1 : 24 * 60;
@@ -73,6 +80,8 @@ export default async function AdminCasePage() {
           사건 페이지 보기
         </Link>
       </section>
+      {current.status === "ADVOCATE_SELECTION" && <AdvocateAdmin />}
+      {current.status === "SENTENCING" && <SentencingAdmin />}
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="font-semibold">단계 일정</h2>
         <table className="w-full text-sm">
@@ -98,5 +107,64 @@ export default async function AdminCasePage() {
         </table>
       </section>
     </div>
+  );
+}
+
+async function AdvocateAdmin() {
+  const [trial, selection] = await Promise.all([getTrialView(null), getSelectionView()]);
+  if (!trial || !selection) return null;
+  if (trial.nominationOpen) {
+    return (
+      <section className="rounded-lg border border-slate-200 bg-white p-6 text-sm text-slate-600">
+        배심원들이 최종 변론인 후보를 추천하고 있습니다. 추천 투표가 끝나면 AI 추천이 나오고, 그 뒤에 선정할 수 있습니다.
+      </section>
+    );
+  }
+  if (selection.alreadySelected) {
+    return <section className="rounded-lg border border-slate-200 bg-white p-6 text-sm">최종 변론인 선정을 마쳤습니다. 단계 마감 후 최종 변론이 시작됩니다.</section>;
+  }
+  const sides = selection.sides.filter((s) => s.candidates.length > 0);
+  const missingAi = sides.some((s) => !s.recommendation);
+  return (
+    <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-6">
+      <h2 className="font-semibold">최종 변론인 선정</h2>
+      <p className="text-sm text-amber-900">
+        AI의 추천과 배심원의 추천 이유를 참고해 진영별 1명을 <strong>단 한 번</strong> 선정합니다. 판결이 뒤집힐 수 있는 핵심 구간이므로, AI 추천과 다르게 고르면 이유를 공개해야 합니다.
+        단계 마감까지 선정하지 않으면 AI 추천으로, AI 추천이 없으면 추천 표가 가장 많은 후보로 확정됩니다.
+      </p>
+      {missingAi && (
+        <form action={requestAiAction} className="flex items-center gap-3 text-sm">
+          <span>아직 AI 추천이 없는 진영이 있습니다 ({sides.filter((s) => !s.recommendation).map((s) => SIDE_LABELS[s.side]).join(", ")}).</span>
+          <button className="rounded border border-slate-300 bg-white px-3 py-1.5 font-semibold">AI 추천 받기</button>
+        </form>
+      )}
+      {sides.length === 0 ? (
+        <p className="text-sm">참여 중인 배심원이 없어 선정할 후보가 없습니다.</p>
+      ) : (
+        <AdvocateSelectForm
+          sides={sides.map((s) => ({
+            side: s.side,
+            candidates: s.candidates,
+            aiPick: s.recommendation?.participationId ?? null,
+            aiRationale: s.recommendation?.rationale ?? null,
+          }))}
+        />
+      )}
+    </section>
+  );
+}
+
+async function SentencingAdmin() {
+  const view = await getSentencingView();
+  if (!view) return null;
+  return (
+    <section className="space-y-4 rounded-lg border border-amber-200 bg-amber-50 p-6">
+      <h2 className="font-semibold">판결 작성</h2>
+      <p className="text-sm">
+        배심원 평결: 유죄 <strong>{view.guilty}</strong>표 · 무죄 <strong>{view.notGuilty}</strong>표 · 설득 지표: 공소 제기 {view.persuasion.baselineIndictRatio}% → 유죄 {view.persuasion.guiltyRatio}%
+      </p>
+      <p className="text-sm text-amber-900">평결을 참고해 무죄 또는 유죄(징역·집행유예·벌금)로 선고하고, 선고 이유를 함께 적어 주세요. 선고하면 판결이 확정됩니다 (MVP는 리뷰·2심 없음).</p>
+      <JudgmentForm />
+    </section>
   );
 }

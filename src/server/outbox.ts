@@ -4,6 +4,8 @@ import { sendMail } from "./mailer";
 
 const SUBJECTS: Record<string, string> = {
   pretrial_started: "[Virtual Courtroom] 공판준비절차 서명을 해 주세요",
+  advocate_selected: "[Virtual Courtroom] 최종 변론인으로 선정되었습니다",
+  deliberation_started: "[Virtual Courtroom] 배심원 평결을 해 주세요",
 };
 
 const BATCH_SIZE = 50;

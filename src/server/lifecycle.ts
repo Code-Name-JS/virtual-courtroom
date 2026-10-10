@@ -1,6 +1,8 @@
 // 02 사건 생애주기의 상태 전환. 웹 앱과 워커(worker/index.ts)가 함께 쓰므로 Next.js 전용 모듈을 가져오지 않습니다.
-import type { ActorType, CaseDecision, CaseStatus, ParticipationStatus, Prisma, PrismaClient } from "@prisma/client";
-import { SIDE_LABELS, resolveIndictmentVote } from "@/domain/case";
+import type { ActorType, CaseDecision, CaseStatus, JudgmentOutcome, ParticipationStatus, Prisma, PrismaClient, SentenceType, Side } from "@prisma/client";
+import { SIDE_LABELS, ratio, resolveIndictmentVote } from "@/domain/case";
+import { OUTCOME_LABELS, SENTENCE_LABELS, nominationDeadline, pickByVotes, pickEarliestSigned } from "@/domain/trial";
+import { type AdvocateRecommender, buildPrompt, parseRecommendation } from "./ai/recommender";
 
 export const CASE_ID = 1;
 
@@ -165,14 +167,332 @@ async function closeEvidence(tx: Tx, round: number, now: Date): Promise<string> 
   return reason;
 }
 
+const SIDES: Side[] = ["indict", "dismiss"];
+const ACTIVE: ParticipationStatus[] = ["signed", "advocate"];
+
+function isUniqueViolation(error: unknown): boolean {
+  return error instanceof Error && "code" in error && (error as { code?: string }).code === "P2002";
+}
+
+/** 재판에 참여 중인 배심원 (서명했고 제외되지 않은 사람) */
+function activeJurors(tx: Tx, round: number, side: Side) {
+  return tx.participation.findMany({ where: { round, side, status: { in: ACTIVE } }, include: { user: { select: { nickname: true } } } });
+}
+
+/** 최종 변론인 후보: 추천을 받은 배심원. 추천이 한 건도 없으면 그 진영의 모든 배심원 (05 진행 중 생길 수 있는 상황) */
+export async function advocateCandidates(tx: Tx, round: number, side: Side) {
+  const jurors = await activeJurors(tx, round, side);
+  const nominations = await tx.advocateNomination.findMany({
+    where: { round, candidate: { side, status: { in: ACTIVE } } },
+    orderBy: { createdAt: "asc" },
+  });
+  const nominated = new Set(nominations.map((n) => n.candidateParticipationId));
+  const pool = nominated.size > 0 ? jurors.filter((j) => nominated.has(j.id)) : jurors;
+  return pool.map((j) => {
+    const received = nominations.filter((n) => n.candidateParticipationId === j.id);
+    return {
+      participationId: j.id,
+      nickname: j.user.nickname,
+      signedAt: j.signedAt,
+      nominationCount: received.length,
+      nominationReasons: received.map((n) => n.reason),
+    };
+  });
+}
+
+const AI_ATTEMPTS = 3;
+
+/**
+ * 추천 투표가 마감되면 AI가 진영별 추천과 이유를 냅니다 (01 최종 변론인 선정 2단계).
+ * AI가 설정되지 않았거나 세 번 시도해도 응답하지 않으면 "AI 추천 없음"으로 기록하고, 운영자가 AI 추천 없이 선정합니다 (02).
+ * 네트워크 호출이 있으므로 워커와 운영자의 요청에서만 부릅니다.
+ */
+export async function runAdvocateRecommendations(db: PrismaClient, recommender: AdvocateRecommender | null, now = new Date()): Promise<string[]> {
+  const log: string[] = [];
+  const current = await db.case.findUnique({ where: { id: CASE_ID } });
+  if (current?.status !== "ADVOCATE_SELECTION") return log;
+  const schedule = await db.stageSchedule.findUnique({ where: { round_stage: { round: current.round, stage: "ADVOCATE_SELECTION" } } });
+  if (!schedule?.startsAt || !schedule.endsAt || now < nominationDeadline(schedule.startsAt, schedule.endsAt)) return log;
+
+  for (const side of SIDES) {
+    const existing = await db.advocateRecommendation.findUnique({ where: { round_side: { round: current.round, side } } });
+    if (existing) continue;
+    const candidates = await advocateCandidates(db, current.round, side);
+    if (candidates.length === 0) continue;
+
+    let result: { participationId: string; rationale: string; request: string; response: string } | null = null;
+    let failure = "AI가 설정되지 않아 AI 추천 없이 진행합니다. 운영자가 배심원의 추천 이유를 참고해 선정합니다.";
+    if (recommender) {
+      const posts = await db.post.findMany({
+        where: { round: current.round, side, isHidden: false, authorParticipationId: { in: candidates.map((c) => c.participationId) } },
+        orderBy: { createdAt: "asc" },
+      });
+      const prompt = buildPrompt({
+        caseTitle: current.title,
+        caseBody: current.body,
+        sideLabel: SIDE_LABELS[side],
+        candidates: candidates.map((c) => ({
+          participationId: c.participationId,
+          nickname: c.nickname,
+          nominationCount: c.nominationCount,
+          nominationReasons: c.nominationReasons,
+          posts: posts.filter((p) => p.authorParticipationId === c.participationId).map((p) => p.body),
+        })),
+      });
+      for (let attempt = 1; attempt <= AI_ATTEMPTS && !result; attempt++) {
+        try {
+          const raw = await recommender.complete(prompt);
+          const parsed = parseRecommendation(raw.text, candidates.map((c) => c.participationId));
+          if (parsed) result = { ...parsed, request: `${prompt.system}\n\n${prompt.user}`, response: raw.text };
+        } catch (error) {
+          console.error(`[ai] ${SIDE_LABELS[side]} 측 추천 실패 (${attempt}/${AI_ATTEMPTS})`, error);
+        }
+      }
+      failure = "AI가 응답하지 않아 AI 추천 없이 진행합니다. 운영자가 배심원의 추천 이유를 참고해 선정합니다.";
+    }
+
+    try {
+      await db.advocateRecommendation.create({
+        data: {
+          round: current.round,
+          side,
+          participationId: result?.participationId ?? null,
+          rationale: result?.rationale ?? failure,
+          provider: recommender?.provider ?? null,
+          model: recommender?.model ?? null,
+          request: result?.request ?? null,
+          response: result?.response ?? null,
+        },
+      });
+    } catch (error) {
+      // 다른 프로세스가 먼저 기록한 경우
+      if (isUniqueViolation(error)) continue;
+      throw error;
+    }
+    const nickname = candidates.find((c) => c.participationId === result?.participationId)?.nickname;
+    log.push(`${SIDE_LABELS[side]} 측 AI 추천: ${nickname ?? "없음"}`);
+  }
+  return log;
+}
+
+/**
+ * 운영자의 최종 변론인 선정: 진영별 1명을 단 한 번 (01). AI 추천과 다른 사람을 고르면 이유가 필요하고,
+ * 선정 결과와 이유는 모두 진행 기록에 공개됩니다.
+ */
+export async function selectAdvocates(
+  db: PrismaClient,
+  operatorId: string,
+  choices: { side: Side; participationId: string; reason: string }[],
+  now = new Date(),
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const current = await db.case.findUniqueOrThrow({ where: { id: CASE_ID } });
+  if (current.status !== "ADVOCATE_SELECTION") return { ok: false, error: "최종 변론인 선정 단계가 아닙니다." };
+  const schedule = await db.stageSchedule.findUnique({ where: { round_stage: { round: current.round, stage: "ADVOCATE_SELECTION" } } });
+  if (!schedule?.startsAt || !schedule.endsAt || now < nominationDeadline(schedule.startsAt, schedule.endsAt)) {
+    return { ok: false, error: "배심원의 추천 투표가 끝난 뒤에 선정할 수 있습니다." };
+  }
+  if ((await db.advocate.count({ where: { round: current.round } })) > 0) {
+    return { ok: false, error: "이미 최종 변론인을 선정했습니다. 선정은 단 한 번만 할 수 있습니다." };
+  }
+
+  const rows: Prisma.AdvocateCreateManyInput[] = [];
+  const summary: string[] = [];
+  for (const side of SIDES) {
+    const candidates = await advocateCandidates(db, current.round, side);
+    if (candidates.length === 0) continue;
+    const choice = choices.find((c) => c.side === side);
+    const picked = candidates.find((c) => c.participationId === choice?.participationId);
+    if (!choice || !picked) return { ok: false, error: `${SIDE_LABELS[side]} 측 최종 변론인을 후보 중에서 골라 주세요.` };
+    const rec = await db.advocateRecommendation.findUnique({ where: { round_side: { round: current.round, side } } });
+    const differsFromAi = rec?.participationId != null && rec.participationId !== picked.participationId;
+    if (differsFromAi && !choice.reason.trim()) {
+      return { ok: false, error: `${SIDE_LABELS[side]} 측: AI 추천과 다른 사람을 선정하려면 이유를 적어야 합니다.` };
+    }
+    rows.push({
+      round: current.round,
+      side,
+      participationId: picked.participationId,
+      aiRecommendedParticipationId: rec?.participationId ?? null,
+      aiRationale: rec?.rationale ?? null,
+      aiRequest: rec?.request ?? null,
+      aiResponse: rec?.response ?? null,
+      selectedBy: "operator",
+      operatorReason: choice.reason.trim() || null,
+      selectedAt: now,
+    });
+    const note = differsFromAi ? ` (AI 추천과 다르게 선정. 이유: ${choice.reason.trim()})` : rec?.participationId ? " (AI 추천과 같음)" : "";
+    summary.push(`${SIDE_LABELS[side]} 측 ${picked.nickname}${note}`);
+  }
+
+  try {
+    await db.$transaction(async (tx) => {
+      await tx.advocate.createMany({ data: rows });
+      await tx.participation.updateMany({ where: { id: { in: rows.map((r) => r.participationId) } }, data: { status: "advocate" } });
+      await tx.caseEvent.create({
+        data: {
+          round: current.round,
+          actorType: "operator",
+          actorUserId: operatorId,
+          decision: "select_advocate",
+          reason: `운영자가 최종 변론인을 선정했습니다: ${summary.join(", ")}.`,
+          createdAt: now,
+        },
+      });
+    });
+  } catch (error) {
+    if (isUniqueViolation(error)) return { ok: false, error: "이미 최종 변론인을 선정했습니다. 선정은 단 한 번만 할 수 있습니다." };
+    throw error;
+  }
+  return { ok: true };
+}
+
+/**
+ * 최종 변론인 선정 마감. 운영자가 선정하지 않은 진영은 AI 추천으로, AI 추천도 없으면 추천 표를 가장 많이 받은 후보로 확정합니다 (02).
+ * 배심원이 한 명도 없는 진영은 변론인 없이 진행합니다 (05).
+ */
+async function closeAdvocateSelection(tx: Tx, round: number, now: Date): Promise<string> {
+  const notes: string[] = [];
+  for (const side of SIDES) {
+    if (await tx.advocate.findUnique({ where: { round_side: { round, side } } })) continue;
+    const candidates = await advocateCandidates(tx, round, side);
+    if (candidates.length === 0) {
+      notes.push(`${SIDE_LABELS[side]} 측은 참여 중인 배심원이 없어 최종 변론인 없이 진행합니다`);
+      continue;
+    }
+    const rec = await tx.advocateRecommendation.findUnique({ where: { round_side: { round, side } } });
+    const nominations = await tx.advocateNomination.findMany({ where: { round, candidate: { side, status: { in: ACTIVE } } } });
+    const byVotes = pickByVotes(nominations) ?? pickEarliestSigned(candidates.map((c) => ({ id: c.participationId, signedAt: c.signedAt })));
+    const participationId = rec?.participationId ?? byVotes;
+    if (!participationId) continue;
+    const selectedBy = rec?.participationId ? "ai_default" : "vote_default";
+    await tx.advocate.create({
+      data: {
+        round,
+        side,
+        participationId,
+        aiRecommendedParticipationId: rec?.participationId ?? null,
+        aiRationale: rec?.rationale ?? null,
+        aiRequest: rec?.request ?? null,
+        aiResponse: rec?.response ?? null,
+        selectedBy,
+        selectedAt: now,
+      },
+    });
+    await tx.participation.update({ where: { id: participationId }, data: { status: "advocate" } });
+    const nickname = candidates.find((c) => c.participationId === participationId)?.nickname;
+    notes.push(
+      `${SIDE_LABELS[side]} 측은 운영자가 기한 안에 선정하지 않아 ${selectedBy === "ai_default" ? "AI 추천" : "추천 표가 가장 많은 후보"}인 ${nickname}(으)로 확정했습니다`,
+    );
+  }
+
+  const reason = `최종 변론인 선정 마감.${notes.length ? ` ${notes.join(". ")}.` : ""} 최종 변론을 시작합니다. 공소 제기 측이 먼저, 불기소 측이 나중에 변론합니다.`;
+  await transition(tx, { round, from: "ADVOCATE_SELECTION", to: "FINAL_ARGUMENT", actorType: "system", reason, now });
+  await notifyParticipants(tx, round, "advocate_selected", "최종 변론인으로 선정되었습니다. 마감 전에 사건 페이지에서 최종 변론을 써 주세요.", {
+    statuses: ["advocate"],
+    sendEmail: true,
+  });
+  await notifyParticipants(tx, round, "final_argument_started", "최종 변론이 시작되었습니다. 양측 최종 변론인의 변론을 읽어 보세요.", { statuses: ["signed"] });
+  return reason;
+}
+
+/** 최종 변론 마감: 비공개 평결을 시작합니다. */
+async function closeFinalArgument(tx: Tx, round: number, now: Date): Promise<string> {
+  const reason = "최종 변론 마감. 배심원 평결을 시작합니다. 평결은 비공개이며 개인 표는 공개되지 않습니다.";
+  await transition(tx, { round, from: "FINAL_ARGUMENT", to: "DELIBERATION", actorType: "system", reason, now });
+  await notifyParticipants(
+    tx,
+    round,
+    "deliberation_started",
+    "배심원 평결이 시작되었습니다. 양측의 주장과 증거, 최종 변론을 보고 유죄 또는 무죄로 평결해 주세요. 개인 표는 공개되지 않습니다.",
+    { statuses: ACTIVE, sendEmail: true },
+  );
+  return reason;
+}
+
+/** 평결 마감: 운영자의 판결 작성을 기다립니다. 평결 집계는 판결과 함께 공개합니다. */
+async function closeDeliberation(tx: Tx, round: number, now: Date): Promise<string> {
+  const voted = await tx.verdictReceipt.count({ where: { round } });
+  const reason = `배심원 평결 마감 (참여 ${voted}명). 운영자가 평결을 참고해 판결을 작성합니다.`;
+  await transition(tx, { round, from: "DELIBERATION", to: "SENTENCING", actorType: "system", reason, now });
+  await notifyParticipants(tx, round, "deliberation_closed", "평결이 마감되었습니다. 운영자의 판결 선고를 기다려 주세요.", { statuses: ACTIVE });
+  return reason;
+}
+
+/**
+ * 운영자의 판결 선고 (01: 평결을 참고해 무죄 또는 유죄로 선고하고 이유를 제공).
+ * MVP(06 결정 2)에서는 리뷰와 2심 없이 1심 판결이 곧 확정됩니다.
+ */
+export async function pronounceJudgment(
+  db: PrismaClient,
+  operatorId: string,
+  input: { outcome: JudgmentOutcome; sentenceType: SentenceType | null; sentenceDetail: string; reasoning: string },
+  now = new Date(),
+): Promise<void> {
+  await db.$transaction(async (tx) => {
+    const current = await tx.case.findUniqueOrThrow({ where: { id: CASE_ID } });
+    const votes = await tx.indictmentVote.groupBy({ by: ["choice"], _count: true });
+    const indict = votes.find((v) => v.choice === "indict")?._count ?? 0;
+    const dismiss = votes.find((v) => v.choice === "dismiss")?._count ?? 0;
+    const ballots = await tx.verdictBallot.groupBy({ by: ["choice"], where: { round: current.round }, _count: true });
+    const guilty = ballots.find((b) => b.choice === "guilty")?._count ?? 0;
+    const notGuilty = ballots.find((b) => b.choice === "not_guilty")?._count ?? 0;
+    const sentenced = input.outcome === "guilty" && input.sentenceType;
+
+    await tx.judgment.create({
+      data: {
+        round: current.round,
+        outcome: input.outcome,
+        sentenceType: sentenced ? input.sentenceType : null,
+        sentenceDetail: sentenced ? input.sentenceDetail.trim() : null,
+        reasoning: input.reasoning.trim(),
+        baselineIndictRatio: ratio(indict, indict + dismiss),
+        verdictGuilty: guilty,
+        verdictNotGuilty: notGuilty,
+        pronouncedBy: operatorId,
+        pronouncedAt: now,
+      },
+    });
+    const sentence = sentenced ? ` (${SENTENCE_LABELS[input.sentenceType!]} ${input.sentenceDetail.trim()})` : "";
+    const reason = `운영자가 판결을 선고했습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. 배심원 평결 유죄 ${guilty}표, 무죄 ${notGuilty}표.`;
+    await transition(tx, {
+      round: current.round,
+      from: "SENTENCING",
+      to: "FINALIZED",
+      actorType: "operator",
+      actorUserId: operatorId,
+      decision: "pronounce",
+      reason,
+      now,
+    });
+    await notifyParticipants(
+      tx,
+      current.round,
+      "judgment_pronounced",
+      `판결이 선고되었습니다: ${OUTCOME_LABELS[input.outcome]}${sentence}. 사건 페이지에서 선고 이유와 설득 지표를 확인해 보세요.`,
+    );
+  });
+}
+
+export type AdvanceOptions = {
+  /**
+   * 추천 투표 마감 후의 AI 추천까지 처리할지. 워커만 넘깁니다 (null이면 "AI 추천 없음"으로 기록).
+   * 생략하면 AI 호출 없이 상태 전환만 합니다 (사건 페이지를 열 때).
+   */
+  recommender?: AdvocateRecommender | null;
+};
+
 /**
  * 마감이 지난 단계를 다음 단계로 넘깁니다. 워커가 1분마다 부르고, 사건 페이지를 열 때도 부릅니다.
  * 운영자가 처리해야 하는 단계(공소 제기 대기, 판결 작성)는 마감이 지나도 넘기지 않습니다.
  */
-export async function advanceDueStages(db: PrismaClient, now = new Date()): Promise<string[]> {
+export async function advanceDueStages(db: PrismaClient, now = new Date(), options: AdvanceOptions = {}): Promise<string[]> {
   const log: string[] = [];
   const current = await db.case.findUnique({ where: { id: CASE_ID } });
   if (!current) return log;
+
+  if (current.status === "ADVOCATE_SELECTION" && options.recommender !== undefined) {
+    log.push(...(await runAdvocateRecommendations(db, options.recommender, now)));
+  }
 
   const schedule = await db.stageSchedule.findUnique({ where: { round_stage: { round: current.round, stage: current.status } } });
   if (!schedule?.endsAt || schedule.endsAt > now) return log;
@@ -184,6 +504,12 @@ export async function advanceDueStages(db: PrismaClient, now = new Date()): Prom
       log.push(await db.$transaction((tx) => closePretrial(tx, current.round, now)));
     } else if (current.status === "EVIDENCE") {
       log.push(await db.$transaction((tx) => closeEvidence(tx, current.round, now)));
+    } else if (current.status === "ADVOCATE_SELECTION") {
+      log.push(await db.$transaction((tx) => closeAdvocateSelection(tx, current.round, now)));
+    } else if (current.status === "FINAL_ARGUMENT") {
+      log.push(await db.$transaction((tx) => closeFinalArgument(tx, current.round, now)));
+    } else if (current.status === "DELIBERATION") {
+      log.push(await db.$transaction((tx) => closeDeliberation(tx, current.round, now)));
     }
   } catch (error) {
     // 다른 프로세스가 먼저 처리한 경우

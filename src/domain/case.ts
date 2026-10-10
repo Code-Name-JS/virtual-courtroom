@@ -126,7 +126,17 @@ export function todoFor(input: {
   isOperator: boolean;
   hasVoted: boolean;
   participationStatus?: ParticipationStatus | null;
+  trial?: {
+    nominationOpen: boolean;
+    hasNominated: boolean;
+    isAdvocate: boolean;
+    hasArgued: boolean;
+    hasVerdict: boolean;
+    advocatesSelected: boolean;
+  };
 }): string {
+  const active = input.participationStatus === "signed" || input.participationStatus === "advocate";
+  const trial = input.trial;
   const excluded = input.participationStatus === "excluded";
   switch (input.status) {
     case "INDICTMENT_VOTE":
@@ -149,7 +159,23 @@ export function todoFor(input: {
       if (input.participationStatus === "signed") return "내 진영 게시판에 생각과 증거자료를 담은 스레드를 써 주세요.";
       return "배심원들이 진영 게시판에 증거를 제출하고 있습니다.";
     case "ADVOCATE_SELECTION":
-      return "양측 게시판이 공개되었습니다. 상대 측의 주장과 증거를 확인해 보세요.";
+      if (trial?.nominationOpen) {
+        if (active && !trial.hasNominated) return "같은 진영에서 최종 변론인으로 적합한 배심원을 이유와 함께 추천해 주세요.";
+        return "양측 게시판이 공개되었습니다. 상대 측의 주장과 증거를 확인해 보세요.";
+      }
+      if (input.isOperator && !trial?.advocatesSelected) return "AI 추천과 배심원의 추천 이유를 참고해 진영별 최종 변론인을 선정해 주세요. 선정은 단 한 번만 할 수 있습니다.";
+      return "운영자가 최종 변론인을 선정하고 있습니다.";
+    case "FINAL_ARGUMENT":
+      if (trial?.isAdvocate) return trial.hasArgued ? "최종 변론을 제출했습니다. 마감 전까지는 고칠 수 있습니다." : "최종 변론인으로서 마감 전에 최종 변론을 써 주세요.";
+      return "양측 최종 변론인의 변론을 읽어 보세요. 공소 제기 측이 먼저, 불기소 측이 나중에 변론합니다.";
+    case "DELIBERATION":
+      if (active && !trial?.hasVerdict) return "모든 주장과 증거, 최종 변론을 보고 유죄 또는 무죄로 평결해 주세요.";
+      if (trial?.hasVerdict) return "평결을 마쳤습니다. 판결을 기다려 주세요.";
+      return "배심원들이 비공개로 평결하고 있습니다.";
+    case "SENTENCING":
+      return input.isOperator ? "평결을 참고해 판결을 작성하고 선고해 주세요." : "운영자가 판결을 작성하고 있습니다.";
+    case "FINALIZED":
+      return "판결이 확정되었습니다. 판결과 설득 지표를 확인해 보세요.";
     default:
       return `${STATUS_LABELS[input.status]} 단계입니다.`;
   }

@@ -3,9 +3,11 @@ import { CaseHeader } from "@/components/CaseHeader";
 import { canReadBoard } from "@/domain/board";
 import { SIDE_LABELS, todoFor } from "@/domain/case";
 import { getViewer } from "@/server/board-service";
+import { getTrialView } from "@/server/trial-service";
 import { getCurrentUser } from "@/server/auth";
 import { getCaseView } from "@/server/case-service";
 import { SignPanel } from "./SignPanel";
+import { TrialSections } from "./TrialSections";
 import { VotePanel } from "./VotePanel";
 
 export const metadata = { title: "사건 · Virtual Courtroom" };
@@ -28,14 +30,25 @@ export default async function CasePage() {
 
   const loggedIn = Boolean(user?.emailVerifiedAt);
   const isOperator = user?.role === "operator";
+  const { viewer } = await getViewer(user);
+  const trial = await getTrialView(loggedIn ? user!.id : null);
   const todo = todoFor({
     status: view.case.status,
     loggedIn,
     isOperator,
     hasVoted: Boolean(view.participation),
     participationStatus: view.participation?.status ?? null,
+    trial: trial
+      ? {
+          nominationOpen: trial.nominationOpen,
+          hasNominated: Boolean(trial.myNomination),
+          isAdvocate: Boolean(trial.myAdvocate),
+          hasArgued: Boolean(trial.myArgument),
+          hasVerdict: trial.hasVerdict,
+          advocatesSelected: trial.advocates.length > 0,
+        }
+      : undefined,
   });
-  const { viewer } = await getViewer(user);
   const status = view.case.status;
   const showBoards = status === "EVIDENCE" || canReadBoard(status, viewer, "indict") || canReadBoard(status, viewer, "dismiss");
 
@@ -65,6 +78,8 @@ export default async function CasePage() {
           )}
         </section>
       )}
+
+      {trial && <TrialSections status={status} trial={trial} isOperator={isOperator} />}
 
       {status === "PRETRIAL" && (
         <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">

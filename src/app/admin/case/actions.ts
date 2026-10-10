@@ -5,6 +5,7 @@ import type { FormState } from "@/components/form";
 import { type ChecklistKey, type DurationInput, MVP_STAGES, REVIEW_CHECKLIST } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
 import { indict, publishCase, saveDraft } from "@/server/case-service";
+import { chooseAdvocates, pronounce, requestRecommendations } from "@/server/trial-service";
 import { env } from "@/server/env";
 
 function text(formData: FormData, name: string): string {
@@ -66,4 +67,36 @@ export async function indictAction(_prev: FormState, formData: FormData): Promis
   if (!result.ok) return { error: result.error };
   revalidatePath("/", "layout");
   return { message: "공소를 제기했습니다. 공판준비절차 서명이 시작되었습니다." };
+}
+
+export async function requestAiAction(): Promise<void> {
+  await requireOperator();
+  await requestRecommendations();
+  revalidatePath("/", "layout");
+}
+
+export async function selectAdvocatesAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { user } = await requireOperator();
+  const choices = (["indict", "dismiss"] as const)
+    .filter((side) => formData.get(`pick_${side}`))
+    .map((side) => ({ side, participationId: String(formData.get(`pick_${side}`)), reason: String(formData.get(`reason_${side}`) ?? "") }));
+  const result = await chooseAdvocates(user.id, choices);
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  return { message: "최종 변론인을 선정했습니다. 선정 결과와 이유가 진행 기록에 공개되었습니다." };
+}
+
+export async function pronounceAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { user } = await requireOperator();
+  const outcome = formData.get("outcome") === "not_guilty" ? "not_guilty" : "guilty";
+  const sentence = String(formData.get("sentenceType") ?? "");
+  const result = await pronounce(user.id, {
+    outcome,
+    sentenceType: sentence === "prison" || sentence === "probation" || sentence === "fine" ? sentence : null,
+    sentenceDetail: String(formData.get("sentenceDetail") ?? ""),
+    reasoning: String(formData.get("reasoning") ?? ""),
+  });
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  return { message: "판결을 선고했습니다." };
 }

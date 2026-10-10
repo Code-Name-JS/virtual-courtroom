@@ -4,12 +4,15 @@ import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
 import { listPendingAppeals, listReports } from "@/server/sanction-service";
 import { db } from "@/server/db";
+import { advanceDueStages } from "@/server/lifecycle";
 
 export const metadata = { title: "관리자 · Virtual Courtroom" };
 
 // 03 O-01 대시보드
 export default async function AdminPage() {
   await requireOperator();
+  // 워커가 없어도 마감이 지난 단계가 넘어가도록 (사건 페이지와 같은 방식)
+  await advanceDueStages(db);
   const [members, verified, current, reports, appeals] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { emailVerifiedAt: { not: null } } }),
@@ -22,7 +25,11 @@ export default async function AdminPage() {
       ? "사건을 만들어 검수한 뒤 게시해 주세요."
       : current.status === "INDICTMENT_PENDING"
         ? "공소를 제기해 재판을 시작해 주세요."
-        : null;
+        : current.status === "ADVOCATE_SELECTION"
+          ? "추천 투표가 끝나면 진영별 최종 변론인을 단 한 번 선정해 주세요."
+          : current.status === "SENTENCING"
+            ? "평결을 참고해 판결을 작성하고 선고해 주세요."
+            : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-10">

@@ -226,6 +226,20 @@ erDiagram
 
 한 번 저장하면 수정할 수 없습니다. 운영자의 선정 기회가 단 한 번이라는 규칙(01)을 데이터로 지키기 위해서입니다.
 
+#### `advocate_recommendation` AI 추천 (진영별 1건)
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `id` | id | |
+| `round` · `side` | int · enum | 유일 |
+| `participation_id` | id, 선택 | AI가 추천한 후보. AI가 설정되지 않았거나 응답하지 않았으면 비어 있음 |
+| `rationale` | text | 추천 이유, 또는 추천이 없는 이유 (공개) |
+| `provider` · `model` | text, 선택 | 사용한 AI 제공자와 모델 |
+| `request` · `response` | text, 선택 | AI에 보낸 내용과 받은 답 원문 (기록용) |
+| `created_at` | datetime | |
+
+추천 투표가 마감되면 만들어지고, 운영자가 선정할 때 참고합니다. 운영자가 선정하면 같은 내용이 `advocate`에도 복사됩니다 (M3 구현에서 추가).
+
 #### `verdict_receipt` 평결 참여 여부 / `verdict_ballot` 평결 내용
 
 | 테이블 | 필드 | 설명 |
