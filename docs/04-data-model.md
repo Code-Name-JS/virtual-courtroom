@@ -31,6 +31,7 @@ erDiagram
     USER ||--o| IP_BINDING : "등록 IP"
     USER ||--o{ IP_CHANGE_LOG : "IP 변경 기록"
     USER ||--o{ EMAIL_VERIFICATION : "이메일 인증"
+    USER ||--o| GUARDIAN_CONSENT : "법정대리인 동의"
 
     CASE ||--o{ STAGE_SCHEDULE : "단계 일정"
     CASE ||--o{ CASE_EVENT : "상태 전환·결정"
@@ -69,6 +70,7 @@ erDiagram
 | `id` | id | |
 | `email` | text, 유일 | 로그인 아이디로 씀 |
 | `email_verified_at` | datetime | 이메일 인증을 마친 시각. 인증 전에는 참여 불가 |
+| `is_under_14` | bool | 가입할 때 선택. `true`이면 법정대리인 동의 전까지 계정이 활성화되지 않음 |
 | `password_hash` | text | 비밀번호는 해시로만 저장 |
 | `nickname` | text, 유일 | 게시판에 보이는 이름. 실명을 쓰지 않음 |
 | `role` | enum | `member` 일반 회원, `operator` 운영자 |
@@ -104,6 +106,20 @@ erDiagram
 | `code_hash` | text | 인증 코드는 해시로만 저장 |
 | `pending_ip_hash` | text, 선택 | IP 변경 인증일 때 바꾸려는 IP |
 | `expires_at` · `used_at` | datetime | |
+
+#### `guardian_consent` 법정대리인 동의 (만 14세 미만)
+
+| 필드 | 타입 | 설명 |
+|---|---|---|
+| `id` | id | |
+| `user_id` | id, 유일 | |
+| `guardian_name` | text | 법정대리인 이름 |
+| `guardian_email` | text | 동의 요청을 보내는 곳 |
+| `token_hash` | text | 동의 링크 토큰 (해시) |
+| `status` | enum | `pending` 대기, `consented` 동의, `refused` 거부, `expired` 만료 |
+| `requested_at` · `responded_at` · `expires_at` | datetime | |
+
+법정대리인이 동의하지 않거나 기한 안에 응답하지 않으면, 가입 신청 정보와 법정대리인 정보를 바로 삭제합니다.
 
 #### `case` 사건 (최대 1행)
 
@@ -145,7 +161,7 @@ erDiagram
 | `from_status` · `to_status` | enum | |
 | `actor_type` | enum | `system`, `operator`, `ai` |
 | `actor_user_id` | id, 선택 | 운영자일 때 |
-| `decision` | enum, 선택 | `extend_vote` 연장, `dismiss_for_quorum` 인원 미달 폐기, `indict` 공소 제기, `open_appeal` 2심 개시, `reject_appeal` 2심 기각, `close_site` 폐쇄 등 |
+| `decision` | enum, 선택 | `dismiss_for_quorum` 인원 미달 자동 폐기(시스템), `indict` 공소 제기, `open_appeal` 2심 개시, `reject_appeal` 2심 기각, `close_site` 폐쇄 등 |
 | `reason` | text, 선택 | 결정 이유 |
 | `is_public` | bool | 사건 페이지에 공개하는지 (운영자 결정은 항상 `true`) |
 | `created_at` | datetime | |
@@ -394,7 +410,7 @@ erDiagram
 | **남김** | `case`의 `title`, `summary`, `status`, `closure_summary`, `closed_at` | 종료 안내 페이지(03 X-01)에 쓰임. 개인정보가 없어야 함 |
 | **남김** | `judgment`의 판결·선고 이유·설득 지표 숫자 | 결과 요약에 쓰임 |
 | **파기** | `user`, `participation`, `indictment_vote`, `verdict_receipt` | 회원 정보와 참여 기록 |
-| **파기** | `ip_binding`, `ip_change_log`, `email_verification`, IP 해시용 비밀 키 | IP와 인증 정보 |
+| **파기** | `ip_binding`, `ip_change_log`, `email_verification`, `guardian_consent`, IP 해시용 비밀 키 | IP, 인증, 법정대리인 정보 |
 | **파기** | `post`, `post_revision`, `evidence`, `final_argument`, `review`, `review_comment` | 회원이 쓴 글 |
 | **파기** | `view_log`, `report`, `leak_detection`, `sanction`, `sanction_appeal` | 열람 기록과 제재 기록 |
 | **파기** | `appeal_application`, `advocate_nomination`, `advocate`, `notification` | |
@@ -419,7 +435,7 @@ erDiagram
 | # | 질문 | 제안 |
 |---|---|---|
 | 3 | 리뷰에 별점을 둘까? (시안: 4.6 / 5) | 선택 항목으로 둠 |
-| 4 | 증거자료로 파일 업로드를 허용할까? | 링크, 이미지, 인용문만 허용하고 이미지 용량을 제한. 저작권·저장 비용 기준은 05에서 결정 |
+| 4 | 증거자료로 파일 업로드를 허용할까? | 링크, 이미지, 인용문만 허용. 이미지는 5MB 이하 4장까지 ([05. 게시판 · 증거자료 정책](./05-policy-and-risk.md#게시판--증거자료-정책)의 제안값) |
 | 5 | 스레드 글을 고치거나 지울 수 있나? | 증거 제출 기간 안에서 수정 가능, 수정 이력은 보관. 삭제하면 배심원에게는 보이지 않게 숨기되 실제로 지우지 않고, 운영자는 계속 볼 수 있음 (유출 흔적을 지우는 것을 막기 위해) |
-| 7 | IP 변경 인증을 하루에 몇 번까지 허용할까? 휴대폰 데이터는 IP가 자주 바뀌어 인증을 자주 해야 할 수 있음 | 횟수 제한과 예외 기준은 05에서 결정 |
+| 7 | ~~IP 변경 인증을 하루에 몇 번까지 허용할까?~~ | **결정됨**: 계정당 하루 5회 ([05. IP · 계정 정책](./05-policy-and-risk.md#ip--계정-정책)) |
 | 8 | 계정이 IP를 바꾸고 나면 이전 IP는 바로 다른 계정이 쓸 수 있나? | 바로 풀어 줌. 다만 같은 IP가 계정 사이를 오가면 `ip_change_log`로 운영자에게 표시 |
