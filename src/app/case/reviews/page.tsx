@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { isActiveMember } from "@/domain/account";
 import { SIDE_LABELS } from "@/domain/case";
 import { getReviewsView } from "@/server/appeal";
 import { getCurrentUser } from "@/server/auth";
@@ -13,7 +14,9 @@ const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "short", timeSt
 // 03 C-11 리뷰. 로그인한 회원만 볼 수 있습니다 (03 접근 권한)
 export default async function ReviewsPage({ searchParams }: { searchParams: Promise<{ round?: string }> }) {
   const user = await getCurrentUser();
-  if (!user?.emailVerifiedAt) redirect("/login");
+  if (!user) redirect("/login");
+  // 이메일 인증이나 법정대리인 동의를 마치지 않았으면 내 활동 화면이 알맞은 인증 화면으로 보냄
+  if (!isActiveMember(user)) redirect("/me");
   const current = await db.case.findUnique({ where: { id: 1 }, select: { round: true } });
   const requested = Number((await searchParams).round);
   const round = requested === 1 || requested === 2 ? Math.min(requested, current?.round ?? 1) : (current?.round ?? 1);

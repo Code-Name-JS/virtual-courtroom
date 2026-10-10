@@ -4,7 +4,9 @@ import { Prisma } from "@prisma/client";
 import {
   LOGIN_ATTEMPTS_PER_IP_PER_HOUR,
   SIGNUP_ATTEMPTS_PER_IP_PER_DAY,
+  GUARDIAN_CONSENT_DAYS,
   type SignupInput,
+  daysFromNow,
   decideIpChange,
   hoursAgo,
   isStaleUnverified,
@@ -12,6 +14,8 @@ import {
 import { isSiteClosed } from "./closure";
 import { db } from "./db";
 import { env } from "./env";
+import { randomToken, sha256 } from "./crypto";
+import { expireGuardianConsents, sendGuardianRequest } from "./guardian";
 import { consumeRateLimit } from "./rate-limit";
 import { issueCode, verifyCode } from "./verification";
 
@@ -37,6 +41,8 @@ const CLOSED_MESSAGE = "사건이 끝나 사이트가 폐쇄되었습니다.";
 
 export async function signUp(input: SignupInput, ipHash: string): Promise<Result<{ userId: string }>> {
   if (await isSiteClosed(db)) return { ok: false, error: CLOSED_MESSAGE };
+  // 법정대리인 동의 기한이 지난 가입 신청이 IP·이메일·닉네임을 계속 차지하지 않도록 먼저 정리
+  await expireGuardianConsents(db);
   if (!(await consumeRateLimit(`signup:${ipHash}`, SIGNUP_ATTEMPTS_PER_IP_PER_DAY, hoursAgo(24)))) {
     return { ok: false, error: "이 네트워크에서 오늘 가입을 시도할 수 있는 횟수를 넘었습니다. 내일 다시 시도해 주세요." };
   }
@@ -52,8 +58,9 @@ export async function signUp(input: SignupInput, ipHash: string): Promise<Result
   const sameNickname = await db.user.findUnique({ where: { nickname: input.nickname } });
   if (sameNickname && !(await removeIfStaleUnverified(sameNickname))) return { ok: false, error: "이미 쓰이고 있는 닉네임입니다." };
 
-  const passwordHash = await hash(input.password);
   const role = env.operatorEmail === input.email ? "operator" : "member";
+  if (role === "operator" && input.guardian) return { ok: false, error: "운영자 계정은 만 14세 이상이어야 합니다." };
+  const passwordHash = await hash(input.password);
 
   let user;
   try {
@@ -63,9 +70,13 @@ export async function signUp(input: SignupInput, ipHash: string): Promise<Result
         passwordHash,
         nickname: input.nickname,
         role,
-        isUnder14: false,
+        isUnder14: input.guardian !== null,
         // 가입한 IP를 등록 IP로 정함. IP 규칙을 끈 시연 모드에서는 등록하지 않음
         ipBinding: env.ipRuleEnabled ? { create: { ipHash, verifiedAt: new Date() } } : undefined,
+        // 만 14세 미만: 법정대리인 정보. 동의 요청 이메일은 가입자의 이메일 인증 후에 보냄 (05, M6 결정)
+        guardianConsent: input.guardian
+          ? { create: { guardianName: input.guardian.name, guardianEmail: input.guardian.email, tokenHash: sha256(randomToken()), expiresAt: daysFromNow(GUARDIAN_CONSENT_DAYS) } }
+          : undefined,
       },
     });
   } catch (error) {
@@ -95,7 +106,16 @@ export async function logIn(email: string, password: string, ipHash: string): Pr
 export async function confirmSignupEmail(userId: string, code: string): Promise<Result> {
   const result = await verifyCode(userId, "signup", code);
   if (!result.ok) return result;
-  await db.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+  const user = await db.user.update({ where: { id: userId }, data: { emailVerifiedAt: new Date() } });
+  // 만 14세 미만은 이메일 인증을 마치면 법정대리인에게 동의 요청을 보냄
+  if (user.isUnder14 && !user.guardianConsentedAt) {
+    try {
+      await sendGuardianRequest(db, userId);
+    } catch (error) {
+      // 메일 발송에 실패해도 인증은 마친 것으로 두고, 동의 대기 화면에서 다시 보낼 수 있게 함
+      console.error("[guardian] 동의 요청 이메일 발송 실패", error);
+    }
+  }
   return { ok: true, value: undefined };
 }
 

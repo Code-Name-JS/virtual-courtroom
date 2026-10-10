@@ -1,6 +1,6 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
-import { checkIpAccess } from "@/domain/account";
+import { checkIpAccess, isActiveMember } from "@/domain/account";
 import { isSiteClosed } from "./closure";
 import { db } from "./db";
 import { env } from "./env";
@@ -12,11 +12,14 @@ type RequireUserOptions = {
   allowUnverifiedEmail?: boolean;
   /** IP 변경 인증 화면처럼, 등록 IP와 달라도 들어와야 하는 곳 */
   allowIpMismatch?: boolean;
+  /** 법정대리인 동의 대기 화면처럼, 동의 전 계정도 들어와야 하는 곳 */
+  allowPendingGuardian?: boolean;
 };
 
 /**
  * 로그인한 회원만 통과시킵니다.
- * 이메일 인증을 마치지 않았으면 /verify-email, 등록 IP와 접속 IP가 다르면 /verify-ip로 보냅니다 (01, 05).
+ * 이메일 인증을 마치지 않았으면 /verify-email, 등록 IP와 접속 IP가 다르면 /verify-ip,
+ * 만 14세 미만이 법정대리인의 동의를 받지 않았으면 /guardian-pending으로 보냅니다 (01, 05).
  */
 export async function requireUser(options: RequireUserOptions = {}) {
   if (await isSiteClosed(db)) redirect("/");
@@ -33,6 +36,7 @@ export async function requireUser(options: RequireUserOptions = {}) {
     ipMatches = checkIpAccess(binding?.ipHash ?? null, ipHash) === "ok";
     if (!ipMatches && !options.allowIpMismatch) redirect("/verify-ip");
   }
+  if (user.emailVerifiedAt && !isActiveMember(user) && !options.allowPendingGuardian) redirect("/guardian-pending");
 
   return { session, user, ipHash, ipMatches };
 }

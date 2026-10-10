@@ -1,6 +1,8 @@
 // 06 단계 자동 전환 워커: 1분마다 마감이 지난 단계를 다음 단계로 넘기고, 알림 이메일을 보냅니다.
+// 법정대리인 동의 기한이 지난 가입 신청도 정리합니다.
 import { PrismaClient } from "@prisma/client";
 import { createRecommenderFromEnv } from "../src/server/ai/recommender";
+import { expireGuardianConsents } from "../src/server/guardian";
 import { advanceDueStages } from "../src/server/lifecycle";
 import { dispatchEmails } from "../src/server/outbox";
 
@@ -13,6 +15,9 @@ async function tick() {
   try {
     const log = await advanceDueStages(db, new Date(), { recommender });
     for (const line of log) console.info(`[worker] ${new Date().toISOString()} ${line}`);
+    // 7일 안에 법정대리인이 동의하지 않은 가입 신청은 취소하고 정보를 삭제 (05)
+    const expired = await expireGuardianConsents(db);
+    if (expired > 0) console.info(`[worker] 법정대리인 동의 기한이 지난 가입 신청 ${expired}건을 삭제했습니다.`);
     const sent = await dispatchEmails(db);
     if (sent > 0) console.info(`[worker] 알림 이메일 ${sent}통을 보냈습니다.`);
   } catch (error) {

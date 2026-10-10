@@ -4,11 +4,12 @@ import {
   checkIpAccess,
   codeSchema,
   decideIpChange,
+  isActiveMember,
   isStaleUnverified,
   signupSchema,
 } from "@/domain/account";
 
-const validSignup = { email: " Juror@Example.com ", password: "password123", nickname: "배심원_01", over14: "on" };
+const validSignup = { email: " Juror@Example.com ", password: "password123", nickname: "배심원_01", ageGroup: "over14" };
 
 describe("회원가입 입력 규칙", () => {
   it("올바른 입력은 이메일을 소문자로 정리해 통과한다", () => {
@@ -17,9 +18,26 @@ describe("회원가입 입력 규칙", () => {
     expect(result.data?.email).toBe("juror@example.com");
   });
 
-  it("만 14세 이상 확인이 없으면 가입할 수 없다 (MVP 테스트 기간)", () => {
-    const { over14: _, ...withoutAge } = validSignup;
+  it("만 14세 이상인지 미만인지 골라야 한다", () => {
+    const { ageGroup: _, ...withoutAge } = validSignup;
     expect(signupSchema.safeParse(withoutAge).success).toBe(false);
+    expect(signupSchema.safeParse(validSignup).data?.guardian).toBeNull();
+  });
+
+  it("만 14세 미만은 법정대리인의 이름과 (가입 이메일과 다른) 이메일이 필요하다", () => {
+    const under14 = { ...validSignup, ageGroup: "under14" };
+    expect(signupSchema.safeParse(under14).success).toBe(false);
+    expect(signupSchema.safeParse({ ...under14, guardianName: "김보호", guardianEmail: "juror@example.com" }).success).toBe(false);
+    const ok = signupSchema.safeParse({ ...under14, guardianName: " 김보호 ", guardianEmail: "Parent@Example.com" });
+    expect(ok.data?.guardian).toEqual({ name: "김보호", email: "parent@example.com" });
+  });
+
+  it("만 14세 미만은 법정대리인이 동의해야 계정이 활성화된다", () => {
+    const verified = new Date();
+    expect(isActiveMember({ emailVerifiedAt: verified, isUnder14: false, guardianConsentedAt: null })).toBe(true);
+    expect(isActiveMember({ emailVerifiedAt: verified, isUnder14: true, guardianConsentedAt: null })).toBe(false);
+    expect(isActiveMember({ emailVerifiedAt: verified, isUnder14: true, guardianConsentedAt: verified })).toBe(true);
+    expect(isActiveMember({ emailVerifiedAt: null, isUnder14: false, guardianConsentedAt: null })).toBe(false);
   });
 
   it("닉네임은 한글·영문·숫자·밑줄 2~16자만 허용한다", () => {

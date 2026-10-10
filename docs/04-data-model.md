@@ -417,6 +417,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | `user.totp_secret_enc`, `user.totp_enabled_at` | 관리자 2단계 인증 비밀 값(암호화 저장)과 설정 완료 시각 |
 | `email_verification.created_at` | 인증 코드 재발송 제한(60초)에 사용 |
 | `notification.send_email`, `notification.emailed_at` | 이메일로도 보내야 하는 알림인지와 보낸 시각. 워커가 보내지 않은 것을 모아 발송 |
+| `user.guardian_consented_at` | (M6) 만 14세 미만 회원의 법정대리인이 동의한 시각. 이메일 인증을 마쳤고, 만 14세 미만이면 이 값이 있어야 계정이 활성화됨 |
 | `case.appeal_side_cap` | (M5) 2심을 열 때 운영자가 공개한 진영별 추가 인원 상한. 비우면 상한 없음 |
 | `case.appeal_approved_at` | (M5) 2심 신청 마감 후 승인 기준을 적용한 시각. 한 번만 적용하기 위해 씀 |
 

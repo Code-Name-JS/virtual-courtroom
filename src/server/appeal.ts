@@ -10,12 +10,13 @@ import {
   checkApplicantEligibility,
   checkReview,
 } from "@/domain/appeal";
+import { isActiveMember } from "@/domain/account";
 import type { AppealTodo } from "@/domain/case";
 import { CASE_ID, advanceDueStages } from "./lifecycle";
 
 export type Result = { ok: true } | { ok: false; error: string };
 
-type Member = { id: string; role: string; emailVerifiedAt: Date | null };
+type Member = { id: string; role: string; emailVerifiedAt: Date | null; isUnder14: boolean; guardianConsentedAt: Date | null };
 
 function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002";
@@ -52,7 +53,7 @@ export async function commentOnReview(db: PrismaClient, user: Member, reviewId: 
   if (!c || !review) return { ok: false, error: "댓글을 달 리뷰를 찾을 수 없습니다." };
   const mine = await db.participation.findUnique({ where: { userId_round: { userId: user.id, round: review.round } } });
   const allowed = canCommentOnReview(c.status, c.round, review.round, {
-    loggedIn: Boolean(user.emailVerifiedAt),
+    loggedIn: isActiveMember(user),
     isOperator: user.role === "operator",
     participationStatus: mine?.status ?? null,
   });
@@ -122,7 +123,7 @@ async function applicantEligibility(db: PrismaClient, user: Member) {
   ]);
   return checkApplicantEligibility({
     isOperator: user.role === "operator",
-    emailVerified: Boolean(user.emailVerifiedAt),
+    emailVerified: isActiveMember(user),
     hasRound1Comment: comments > 0,
     sanctionCount: sanctions,
     round1Status: first?.status ?? null,
@@ -216,7 +217,7 @@ export async function getReviewsView(db: PrismaClient, user: Member | null, roun
     mine = myReview;
     canWrite = round === c.round && canWriteReview(c.status, { isOperator: user.role === "operator", participationStatus: roundParticipation?.status ?? null }).ok;
     canComment = canCommentOnReview(c.status, c.round, round, {
-      loggedIn: Boolean(user.emailVerifiedAt),
+      loggedIn: isActiveMember(user),
       isOperator: user.role === "operator",
       participationStatus: roundParticipation?.status ?? null,
     }).ok;

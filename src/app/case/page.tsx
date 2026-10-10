@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { CaseHeader } from "@/components/CaseHeader";
+import { isActiveMember } from "@/domain/account";
 import { canReadBoard } from "@/domain/board";
 import { SIDE_LABELS, todoFor } from "@/domain/case";
 import { getViewer } from "@/server/board-service";
@@ -31,7 +32,8 @@ export default async function CasePage() {
     );
   }
 
-  const loggedIn = Boolean(user?.emailVerifiedAt);
+  // 이메일 인증을 마치고, 만 14세 미만이면 법정대리인이 동의한 회원 (05)
+  const loggedIn = user ? isActiveMember(user) : false;
   const isOperator = user?.role === "operator";
   const { viewer } = await getViewer(user);
   const trial = await getTrialView(loggedIn ? user!.id : null);

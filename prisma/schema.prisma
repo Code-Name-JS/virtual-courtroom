@@ -192,6 +192,8 @@ model User {
   nickname        String    @unique
   role            Role      @default(member)
   isUnder14       Boolean   @default(false) @map("is_under_14")
+  // 만 14세 미만이면 법정대리인이 동의한 시각. 동의 전에는 계정이 활성화되지 않음 (05)
+  guardianConsentedAt DateTime? @map("guardian_consented_at")
   // 관리자 2단계 인증 (05 IP · 계정 정책). 비밀 값은 암호화해 저장
   totpSecretEnc   String?   @map("totp_secret_enc")
   totpEnabledAt   DateTime? @map("totp_enabled_at")

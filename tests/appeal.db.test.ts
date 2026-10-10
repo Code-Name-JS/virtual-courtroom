@@ -9,7 +9,7 @@ const url = process.env.TEST_DATABASE_URL;
 describe.skipIf(!url)("리뷰 · 2심 (DB 통합 테스트)", () => {
   const db = new PrismaClient({ datasourceUrl: url });
   const minutes = (m: number) => new Date(Date.now() + m * 60_000);
-  type Member = { id: string; role: string; emailVerifiedAt: Date | null };
+  type Member = { id: string; role: string; emailVerifiedAt: Date | null; isUnder14: boolean; guardianConsentedAt: Date | null };
   let users: Record<string, Member> = {};
   let operator: Member;
 

@@ -1,6 +1,7 @@
 // 02 사건 생애주기의 상태 전환. 웹 앱과 워커(worker/index.ts)가 함께 쓰므로 Next.js 전용 모듈을 가져오지 않습니다.
 import type { ActorType, CaseDecision, CaseStatus, JudgmentOutcome, ParticipationStatus, Prisma, PrismaClient, SentenceType, Side } from "@prisma/client";
 import { randomInt } from "node:crypto";
+import { isActiveMember } from "@/domain/account";
 import { allocateAppealSeats, applicationDeadline, checkApplicantEligibility, round2Baseline } from "@/domain/appeal";
 import { CASE_STAGES, ROUND2_STAGES, SIDE_LABELS, ratio, resolveIndictmentVote } from "@/domain/case";
 import { OUTCOME_LABELS, SENTENCE_LABELS, nominationDeadline, pickByVotes, pickEarliestSigned } from "@/domain/trial";
@@ -615,6 +616,8 @@ export async function applyAppealApprovals(tx: Tx, now: Date, random: () => numb
           nickname: true,
           role: true,
           emailVerifiedAt: true,
+          isUnder14: true,
+          guardianConsentedAt: true,
           _count: { select: { sanctions: true, reviewComments: { where: { review: { round: 1 } } } } },
           participations: { where: { round: 1 }, select: { status: true } },
         },
@@ -627,7 +630,7 @@ export async function applyAppealApprovals(tx: Tx, now: Date, random: () => numb
     side: a.requestedSide,
     eligible: checkApplicantEligibility({
       isOperator: a.user.role === "operator",
-      emailVerified: Boolean(a.user.emailVerifiedAt),
+      emailVerified: isActiveMember(a.user),
       hasRound1Comment: a.user._count.reviewComments > 0,
       sanctionCount: a.user._count.sanctions,
       round1Status: a.user.participations[0]?.status ?? null,

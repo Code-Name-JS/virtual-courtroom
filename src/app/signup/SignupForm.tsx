@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Field, FormMessage, type FormState, SubmitButton } from "@/components/form";
 import { signupAction } from "./actions";
 
 export function SignupForm() {
   const [state, action] = useActionState(signupAction, {} as FormState);
+  const [ageGroup, setAgeGroup] = useState<"over14" | "under14">("over14");
 
   return (
     <form action={action} className="space-y-4">
@@ -32,15 +33,36 @@ export function SignupForm() {
         <p>· 접속 IP가 바뀌면 이메일 인증을 다시 거쳐야 합니다.</p>
       </div>
 
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" name="over14" required className="mt-1" />
-        <span>
-          만 14세 이상입니다. <span className="text-slate-500">(테스트 기간에는 만 14세 미만은 가입할 수 없습니다)</span>
-        </span>
-      </label>
+      <fieldset className="space-y-2">
+        <legend className="text-sm font-medium text-slate-700">나이</legend>
+        <div className="flex gap-4 text-sm">
+          {(
+            [
+              ["over14", "만 14세 이상"],
+              ["under14", "만 14세 미만"],
+            ] as const
+          ).map(([value, label]) => (
+            <label key={value} className="flex items-center gap-2">
+              <input type="radio" name="ageGroup" value={value} checked={ageGroup === value} onChange={() => setAgeGroup(value)} />
+              {label}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+
+      {ageGroup === "under14" && (
+        <div className="space-y-3 rounded border border-amber-200 bg-amber-50 p-3">
+          <p className="text-sm text-amber-900">
+            만 14세 미만은 <strong>법정대리인(부모님 등)의 동의</strong>가 있어야 가입할 수 있습니다. 이메일 인증을 마치면 법정대리인에게 동의 요청 이메일을 보내고, 동의하면
+            가입이 완료됩니다. 7일 안에 동의하지 않으면 가입 신청은 취소되고 입력한 정보는 모두 삭제됩니다.
+          </p>
+          <Field label="법정대리인 이름" name="guardianName" maxLength={50} required />
+          <Field label="법정대리인 이메일" name="guardianEmail" type="email" required hint="동의 요청을 받을 이메일입니다. 가입하는 이메일과 달라야 합니다." />
+        </div>
+      )}
 
       <p className="text-xs text-slate-500">
-        가입하면 서비스 제공에 꼭 필요한 정보(이메일, 닉네임, IP 해시 등)를 처리합니다. 자세한 내용은{" "}
+        가입하면 서비스 제공에 꼭 필요한 정보(이메일, 닉네임, IP 해시 등, 만 14세 미만이면 법정대리인의 이름과 이메일)를 처리합니다. 자세한 내용은{" "}
         <Link href="/privacy" target="_blank" className="underline">
           개인정보처리방침
         </Link>

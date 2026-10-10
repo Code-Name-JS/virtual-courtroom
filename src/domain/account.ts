@@ -14,27 +14,54 @@ export const SESSION_TTL_DAYS = 30;
 const HOUR_MS = 60 * 60 * 1000;
 const DAY_MS = 24 * HOUR_MS;
 
-export const signupSchema = z.object({
-  email: z
-    .string()
-    .trim()
-    .toLowerCase()
-    .pipe(z.email({ error: "올바른 이메일 주소를 입력해 주세요." }).max(254)),
-  password: z
-    .string()
-    .min(8, { error: "비밀번호는 8자 이상이어야 합니다." })
-    .max(128, { error: "비밀번호는 128자 이하로 입력해 주세요." }),
-  nickname: z
-    .string()
-    .trim()
-    .min(2, { error: "닉네임은 2자 이상이어야 합니다." })
-    .max(16, { error: "닉네임은 16자 이하로 입력해 주세요." })
-    .regex(/^[가-힣a-zA-Z0-9_]+$/, { error: "닉네임은 한글, 영문, 숫자, 밑줄(_)만 쓸 수 있습니다." }),
-  // MVP는 테스트 기간이므로 만 14세 미만 가입을 막음 (06 결정 3)
-  over14: z.literal("on", { error: "만 14세 이상만 가입할 수 있습니다." }),
+// 05 만 14세 미만: 법정대리인 동의 후 가입
+export const GUARDIAN_CONSENT_DAYS = 7;
+export const GUARDIAN_REQUESTS_PER_DAY = 3;
+
+const emailField = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .pipe(z.email({ error: "올바른 이메일 주소를 입력해 주세요." }).max(254));
+
+export const guardianSchema = z.object({
+  guardianName: z.string().trim().min(1, { error: "법정대리인의 이름을 입력해 주세요." }).max(50, { error: "이름은 50자 이하로 입력해 주세요." }),
+  guardianEmail: emailField,
 });
 
-export type SignupInput = z.infer<typeof signupSchema>;
+export const signupSchema = z
+  .object({
+    email: emailField,
+    password: z
+      .string()
+      .min(8, { error: "비밀번호는 8자 이상이어야 합니다." })
+      .max(128, { error: "비밀번호는 128자 이하로 입력해 주세요." }),
+    nickname: z
+      .string()
+      .trim()
+      .min(2, { error: "닉네임은 2자 이상이어야 합니다." })
+      .max(16, { error: "닉네임은 16자 이하로 입력해 주세요." })
+      .regex(/^[가-힣a-zA-Z0-9_]+$/, { error: "닉네임은 한글, 영문, 숫자, 밑줄(_)만 쓸 수 있습니다." }),
+    ageGroup: z.enum(["over14", "under14"], { error: "만 14세 이상인지 미만인지 골라 주세요." }),
+    guardianName: z.string().optional(),
+    guardianEmail: z.string().optional(),
+  })
+  .transform((input, ctx) => {
+    if (input.ageGroup === "over14") return { ...input, guardian: null };
+    // 만 14세 미만은 법정대리인의 이름과 이메일을 받아 동의를 요청 (05)
+    const guardian = guardianSchema.safeParse({ guardianName: input.guardianName ?? "", guardianEmail: input.guardianEmail ?? "" });
+    if (!guardian.success) {
+      for (const issue of guardian.error.issues) ctx.addIssue({ code: "custom", message: issue.message });
+      return z.NEVER;
+    }
+    if (guardian.data.guardianEmail === input.email) {
+      ctx.addIssue({ code: "custom", message: "법정대리인의 이메일은 가입하는 이메일과 달라야 합니다." });
+      return z.NEVER;
+    }
+    return { ...input, guardian: { name: guardian.data.guardianName, email: guardian.data.guardianEmail } };
+  });
+
+export type SignupInput = z.output<typeof signupSchema>;
 
 export const loginSchema = z.object({
   email: z.string().trim().toLowerCase().min(1, { error: "이메일을 입력해 주세요." }),
@@ -81,4 +108,12 @@ export function minutesFromNow(minutes: number, now = new Date()): Date {
 
 export function hoursAgo(hours: number, now = new Date()): Date {
   return new Date(now.getTime() - hours * HOUR_MS);
+}
+
+/**
+ * 서비스를 이용할 수 있는 회원인지: 이메일 인증을 마쳤고, 만 14세 미만이면 법정대리인이 동의했어야 합니다 (05).
+ * 동의 전에는 계정이 활성화되지 않아 사건 내용과 게시판, 리뷰를 볼 수 없고 참여할 수도 없습니다.
+ */
+export function isActiveMember(user: { emailVerifiedAt: Date | null; isUnder14: boolean; guardianConsentedAt: Date | null }): boolean {
+  return user.emailVerifiedAt !== null && (!user.isUnder14 || user.guardianConsentedAt !== null);
 }

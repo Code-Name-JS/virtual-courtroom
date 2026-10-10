@@ -1,6 +1,7 @@
 import "server-only";
 import type { CaseStatus, Side } from "@prisma/client";
 import { type EvidenceInput, POST_MAX_LENGTH, type Viewer, canReadBoard, canWriteBoard, checkEvidence } from "@/domain/board";
+import { isActiveMember } from "@/domain/account";
 import { randomToken } from "./crypto";
 import { db } from "./db";
 import { CASE_ID } from "./lifecycle";
@@ -8,7 +9,7 @@ import { CASE_ID } from "./lifecycle";
 export type Result<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
 /** 현재 심급에서 이 사용자의 참여 상태와 쓰기 제한 여부 */
-export type BoardUser = { id: string; role: string; emailVerifiedAt: Date | null };
+export type BoardUser = { id: string; role: string; emailVerifiedAt: Date | null; isUnder14: boolean; guardianConsentedAt: Date | null };
 
 export async function getViewer(user: BoardUser | null): Promise<{ viewer: Viewer; round: number; status: CaseStatus }> {
   const { round, status } = await getStatus();
@@ -22,7 +23,7 @@ export async function getViewer(user: BoardUser | null): Promise<{ viewer: Viewe
   ]);
   return {
     viewer: {
-      loggedIn: Boolean(user.emailVerifiedAt),
+      loggedIn: isActiveMember(user),
       isOperator: user.role === "operator",
       participation: participation ? { side: participation.side, status: participation.status } : null,
       writeBanned: writeBan !== null,
