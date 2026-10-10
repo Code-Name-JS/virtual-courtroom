@@ -5,6 +5,7 @@ import { getCase } from "@/server/case-service";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { CaseForm, type CaseFormValues } from "./CaseForm";
+import { IndictForm } from "./IndictForm";
 
 export const metadata = { title: "사건 관리 · Virtual Courtroom" };
 
@@ -23,7 +24,7 @@ export default async function AdminCasePage() {
   const unit = env.demoMode ? 1 : 24 * 60;
 
   if (!current || current.status === "DRAFT") {
-    const durations = defaultDurations();
+    const durations = defaultDurations(env.demoMode);
     const saved = Object.fromEntries(schedules.map((s) => [s.stage, s.durationMinutes]));
     const values: CaseFormValues = {
       title: current?.title ?? "",
@@ -63,9 +64,10 @@ export default async function AdminCasePage() {
           {current.title} · 공소 투표 참여 {voteCount}명 (최소 {current.minParticipants}명)
         </p>
         {current.status === "INDICTMENT_PENDING" && (
-          <p className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            공소 제기를 기다리고 있습니다. 공소 제기 기능은 다음 단계(M2)에서 추가됩니다.
-          </p>
+          <div className="space-y-3 rounded border border-amber-200 bg-amber-50 p-4">
+            <p className="text-sm text-amber-800">공소 투표 결과 공소 제기가 결정되었습니다. 공소를 제기하면 재판이 열리고 공판준비절차 서명이 시작됩니다. (AI는 공소를 제기할 수 없습니다)</p>
+            <IndictForm />
+          </div>
         )}
         <Link href="/case" className="inline-block text-sm font-semibold text-navy-800 underline">
           사건 페이지 보기

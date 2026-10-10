@@ -2,6 +2,7 @@ import Link from "next/link";
 import { STATUS_LABELS } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
+import { listPendingAppeals, listReports } from "@/server/sanction-service";
 import { db } from "@/server/db";
 
 export const metadata = { title: "관리자 · Virtual Courtroom" };
@@ -9,16 +10,18 @@ export const metadata = { title: "관리자 · Virtual Courtroom" };
 // 03 O-01 대시보드
 export default async function AdminPage() {
   await requireOperator();
-  const [members, verified, current] = await Promise.all([
+  const [members, verified, current, reports, appeals] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { emailVerifiedAt: { not: null } } }),
     getCase(),
+    listReports(),
+    listPendingAppeals(),
   ]);
   const todo =
     !current || current.status === "DRAFT"
       ? "사건을 만들어 검수한 뒤 게시해 주세요."
       : current.status === "INDICTMENT_PENDING"
-        ? "공소를 제기해 재판을 시작해 주세요. (M2에서 추가)"
+        ? "공소를 제기해 재판을 시작해 주세요."
         : null;
 
   return (
@@ -40,9 +43,14 @@ export default async function AdminPage() {
           사건 상태: <strong>{current ? STATUS_LABELS[current.status] : "사건 없음"}</strong>
         </p>
         {todo ? <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">{todo}</p> : <p className="text-sm text-slate-600">지금은 조치할 일이 없습니다.</p>}
-        <Link href="/admin/case" className="inline-block rounded bg-navy-900 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-800">
-          {!current || current.status === "DRAFT" ? "사건 만들기" : "사건 관리"}
-        </Link>
+        <div className="flex flex-wrap gap-2">
+          <Link href="/admin/case" className="inline-block rounded bg-navy-900 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-800">
+            {!current || current.status === "DRAFT" ? "사건 만들기" : "사건 관리"}
+          </Link>
+          <Link href="/admin/reports" className="inline-block rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
+            신고 · 제재 (처리할 신고 {reports.length}건, 이의 신청 {appeals.length}건)
+          </Link>
+        </div>
       </section>
     </div>
   );

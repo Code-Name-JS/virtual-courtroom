@@ -1,4 +1,4 @@
-import type { CaseStatus, Side } from "@prisma/client";
+import type { CaseStatus, ParticipationStatus, Side } from "@prisma/client";
 
 const MINUTE = 1;
 const DAY = 24 * 60 * MINUTE;
@@ -33,15 +33,15 @@ export const SIDE_LABELS: Record<Side, string> = {
  * - operator: 운영자가 처리해야 넘어감. 마감은 "운영자 조치 지연" 표시에만 씀 (05)
  */
 export const MVP_STAGES = [
-  { stage: "INDICTMENT_VOTE", kind: "timed", defaultMinutes: 7 * DAY },
-  { stage: "INDICTMENT_PENDING", kind: "operator", defaultMinutes: 3 * DAY },
-  { stage: "PRETRIAL", kind: "timed", defaultMinutes: 3 * DAY },
-  { stage: "EVIDENCE", kind: "timed", defaultMinutes: 30 * DAY },
-  { stage: "ADVOCATE_SELECTION", kind: "timed", defaultMinutes: 7 * DAY },
-  { stage: "FINAL_ARGUMENT", kind: "timed", defaultMinutes: 3 * DAY },
-  { stage: "DELIBERATION", kind: "timed", defaultMinutes: 3 * DAY },
-  { stage: "SENTENCING", kind: "operator", defaultMinutes: 3 * DAY },
-] as const satisfies ReadonlyArray<{ stage: CaseStatus; kind: "timed" | "operator"; defaultMinutes: number }>;
+  { stage: "INDICTMENT_VOTE", kind: "timed", defaultMinutes: 7 * DAY, demoMinutes: 5 },
+  { stage: "INDICTMENT_PENDING", kind: "operator", defaultMinutes: 3 * DAY, demoMinutes: 5 },
+  { stage: "PRETRIAL", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 3 },
+  { stage: "EVIDENCE", kind: "timed", defaultMinutes: 30 * DAY, demoMinutes: 10 },
+  { stage: "ADVOCATE_SELECTION", kind: "timed", defaultMinutes: 7 * DAY, demoMinutes: 5 },
+  { stage: "FINAL_ARGUMENT", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 5 },
+  { stage: "DELIBERATION", kind: "timed", defaultMinutes: 3 * DAY, demoMinutes: 3 },
+  { stage: "SENTENCING", kind: "operator", defaultMinutes: 3 * DAY, demoMinutes: 5 },
+] as const satisfies ReadonlyArray<{ stage: CaseStatus; kind: "timed" | "operator"; defaultMinutes: number; demoMinutes: number }>;
 
 export type ScheduledStage = (typeof MVP_STAGES)[number]["stage"];
 
@@ -68,8 +68,9 @@ export const MIN_PARTICIPANTS = 50;
 
 export type DurationInput = Record<ScheduledStage, number>;
 
-export function defaultDurations(): DurationInput {
-  return Object.fromEntries(MVP_STAGES.map((s) => [s.stage, s.defaultMinutes])) as DurationInput;
+/** 기본 기간(분). 시연 모드에서는 흐름을 빠르게 확인할 수 있도록 몇 분 단위 */
+export function defaultDurations(demoMode = false): DurationInput {
+  return Object.fromEntries(MVP_STAGES.map((s) => [s.stage, demoMode ? s.demoMinutes : s.defaultMinutes])) as DurationInput;
 }
 
 export type CaseSettingsCheck = { ok: true } | { ok: false; error: string };
@@ -119,7 +120,14 @@ export function ratio(part: number, total: number): number {
 }
 
 /** 03 C-01 사건 페이지 맨 위의 "지금 할 일" */
-export function todoFor(input: { status: CaseStatus; loggedIn: boolean; isOperator: boolean; hasVoted: boolean }): string {
+export function todoFor(input: {
+  status: CaseStatus;
+  loggedIn: boolean;
+  isOperator: boolean;
+  hasVoted: boolean;
+  participationStatus?: ParticipationStatus | null;
+}): string {
+  const excluded = input.participationStatus === "excluded";
   switch (input.status) {
     case "INDICTMENT_VOTE":
       if (input.isOperator) return "운영자는 투표할 수 없습니다. 투표 마감을 기다려 주세요.";
@@ -130,6 +138,18 @@ export function todoFor(input: { status: CaseStatus; loggedIn: boolean; isOperat
       return input.isOperator ? "공소를 제기해 재판을 시작해 주세요." : "운영자의 공소 제기를 기다리고 있습니다.";
     case "DISMISSED":
       return "사건이 폐기되었습니다. 사건이 끝나 사이트는 곧 폐쇄됩니다.";
+    case "PRETRIAL":
+      if (input.isOperator) return "배심원들이 공판준비절차 서명을 하고 있습니다.";
+      if (input.participationStatus === "voted") return "공판준비절차 서명을 해 주세요. 서명하지 않으면 재판 단계부터 제외됩니다.";
+      if (input.participationStatus === "signed") return "서명을 마쳤습니다. 증거 제출이 시작되면 진영 게시판에 글을 쓸 수 있습니다.";
+      return "공소 투표에 참여한 배심원들이 서명하고 있습니다.";
+    case "EVIDENCE":
+      if (input.isOperator) return "증거 제출 기간입니다. 신고가 들어오면 확인해 주세요.";
+      if (excluded) return "재판 단계에서 제외되어 게시판에 참여할 수 없습니다.";
+      if (input.participationStatus === "signed") return "내 진영 게시판에 생각과 증거자료를 담은 스레드를 써 주세요.";
+      return "배심원들이 진영 게시판에 증거를 제출하고 있습니다.";
+    case "ADVOCATE_SELECTION":
+      return "양측 게시판이 공개되었습니다. 상대 측의 주장과 증거를 확인해 보세요.";
     default:
       return `${STATUS_LABELS[input.status]} 단계입니다.`;
   }

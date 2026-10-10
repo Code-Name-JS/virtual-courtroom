@@ -31,7 +31,13 @@ export default async function MePage() {
               <span className="text-slate-500">내 진영</span> {view.mySide ?? "아직 참여하지 않음"}
             </p>
             <p className="rounded bg-slate-50 px-3 py-2 font-medium">
-              {todoFor({ status: view.case.status, loggedIn: true, isOperator: user.role === "operator", hasVoted: Boolean(view.participation) })}
+              {todoFor({
+                status: view.case.status,
+                loggedIn: true,
+                isOperator: user.role === "operator",
+                hasVoted: Boolean(view.participation),
+                participationStatus: view.participation?.status ?? null,
+              })}
             </p>
             <Link href="/case" className="inline-block font-semibold text-navy-800 underline">
               사건 페이지로 가기
@@ -69,6 +75,10 @@ export default async function MePage() {
           <dd>{user.role === "operator" ? "운영자" : "회원"}</dd>
         </dl>
       </section>
+
+      <Link href="/me/sanctions" className="inline-block text-sm text-slate-600 underline">
+        제재 내역 · 이의 신청
+      </Link>
 
       {user.role === "operator" && (
         <Link href="/admin" className="inline-block rounded bg-navy-900 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-800">

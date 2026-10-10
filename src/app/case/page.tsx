@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { CaseHeader } from "@/components/CaseHeader";
+import { canReadBoard } from "@/domain/board";
 import { SIDE_LABELS, todoFor } from "@/domain/case";
+import { getViewer } from "@/server/board-service";
 import { getCurrentUser } from "@/server/auth";
 import { getCaseView } from "@/server/case-service";
+import { SignPanel } from "./SignPanel";
 import { VotePanel } from "./VotePanel";
 
 export const metadata = { title: "사건 · Virtual Courtroom" };
@@ -25,7 +28,16 @@ export default async function CasePage() {
 
   const loggedIn = Boolean(user?.emailVerifiedAt);
   const isOperator = user?.role === "operator";
-  const todo = todoFor({ status: view.case.status, loggedIn, isOperator, hasVoted: Boolean(view.participation) });
+  const todo = todoFor({
+    status: view.case.status,
+    loggedIn,
+    isOperator,
+    hasVoted: Boolean(view.participation),
+    participationStatus: view.participation?.status ?? null,
+  });
+  const { viewer } = await getViewer(user);
+  const status = view.case.status;
+  const showBoards = status === "EVIDENCE" || canReadBoard(status, viewer, "indict") || canReadBoard(status, viewer, "dismiss");
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 px-4 py-10">
@@ -51,6 +63,48 @@ export default async function CasePage() {
           ) : (
             <VotePanel />
           )}
+        </section>
+      )}
+
+      {status === "PRETRIAL" && (
+        <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-bold">공판준비절차 서명</h2>
+          {view.participation?.status === "voted" ? (
+            <SignPanel />
+          ) : view.participation?.status === "signed" ? (
+            <p className="rounded bg-slate-50 px-4 py-3 text-sm">서명을 마쳤습니다. 증거 제출이 시작되면 {view.mySide} 측 게시판이 열립니다.</p>
+          ) : (
+            <p className="text-sm text-slate-600">공소 투표에 참여한 배심원이 서명하는 단계입니다. 서명하지 않은 배심원은 마감 후 재판 단계부터 제외됩니다.</p>
+          )}
+        </section>
+      )}
+
+      {showBoards && (
+        <section className="space-y-4 rounded-lg border border-slate-200 bg-white p-6">
+          <h2 className="text-lg font-bold">진영 게시판</h2>
+          <p className="text-sm text-slate-600">
+            {status === "EVIDENCE"
+              ? "증거 제출 기간에는 자기 측 게시판만 볼 수 있습니다. 기간이 끝나면 양측 게시판이 모두 공개됩니다."
+              : "증거 제출이 끝나 양측 게시판이 공개되었습니다."}
+          </p>
+          <div className="grid gap-3 sm:grid-cols-2">
+            {(["indict", "dismiss"] as const).map((side) => {
+              const open = canReadBoard(status, viewer, side);
+              return open ? (
+                <Link
+                  key={side}
+                  href={`/case/board/${side}`}
+                  className={`rounded-lg border-2 px-4 py-4 font-bold ${side === "indict" ? "border-indict text-indict" : "border-dismiss text-dismiss"}`}
+                >
+                  {SIDE_LABELS[side]} 측 게시판 →
+                </Link>
+              ) : (
+                <div key={side} className="rounded-lg border-2 border-dashed border-slate-200 px-4 py-4 font-bold text-slate-400">
+                  {SIDE_LABELS[side]} 측 게시판 🔒
+                </div>
+              );
+            })}
+          </div>
         </section>
       )}
 

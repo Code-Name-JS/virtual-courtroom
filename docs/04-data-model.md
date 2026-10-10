@@ -402,6 +402,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | `rate_limit_event` | 요청 횟수 제한 기록 (같은 IP 가입 시도 하루 3회, 로그인 시도, 2단계 인증 시도 등) |
 | `user.totp_secret_enc`, `user.totp_enabled_at` | 관리자 2단계 인증 비밀 값(암호화 저장)과 설정 완료 시각 |
 | `email_verification.created_at` | 인증 코드 재발송 제한(60초)에 사용 |
+| `notification.send_email`, `notification.emailed_at` | 이메일로도 보내야 하는 알림인지와 보낸 시각. 워커가 보내지 않은 것을 모아 발송 |
 
 ---
 

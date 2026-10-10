@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import type { FormState } from "@/components/form";
 import { type ChecklistKey, type DurationInput, MVP_STAGES, REVIEW_CHECKLIST } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
-import { publishCase, saveDraft } from "@/server/case-service";
+import { indict, publishCase, saveDraft } from "@/server/case-service";
 import { env } from "@/server/env";
 
 function text(formData: FormData, name: string): string {
@@ -58,4 +58,12 @@ export async function saveDraftAction(_prev: FormState, formData: FormData): Pro
 
   revalidatePath("/admin/case");
   return { message: "저장했습니다. 게시 전까지는 계속 고칠 수 있습니다." };
+}
+
+export async function indictAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { user } = await requireOperator();
+  const result = await indict(user.id, String(formData.get("note") ?? ""));
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  return { message: "공소를 제기했습니다. 공판준비절차 서명이 시작되었습니다." };
 }

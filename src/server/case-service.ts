@@ -11,7 +11,7 @@ import {
 } from "@/domain/case";
 import { db } from "./db";
 import { env } from "./env";
-import { CASE_ID, StatusConflictError, advanceDueStages, transition } from "./lifecycle";
+import { CASE_ID, StatusConflictError, advanceDueStages, indictCase, transition } from "./lifecycle";
 
 export type Result = { ok: true } | { ok: false; error: string };
 
@@ -137,6 +137,32 @@ export async function castIndictmentVote(user: { id: string; role: string }, cho
     }
     throw error;
   }
+  return { ok: true };
+}
+
+/** 03 O-03 운영자의 공소 제기 */
+export async function indict(operatorId: string, note: string): Promise<Result> {
+  const current = await getCase();
+  if (current?.status !== "INDICTMENT_PENDING") return { ok: false, error: "공소 제기 대기 상태가 아닙니다." };
+  try {
+    await indictCase(db, operatorId, note.trim().slice(0, 500));
+  } catch (error) {
+    if (error instanceof StatusConflictError) return { ok: false, error: "이미 공소가 제기되었습니다." };
+    throw error;
+  }
+  return { ok: true };
+}
+
+/** 03 C-04 공판준비절차 서명: 투표에 참여한 배심원만, 공판준비 기간에만 (01) */
+export async function signPretrial(userId: string): Promise<Result> {
+  await advanceDueStages(db);
+  const current = await getCase();
+  if (current?.status !== "PRETRIAL") return { ok: false, error: "지금은 공판준비절차 서명 기간이 아닙니다." };
+  const signed = await db.participation.updateMany({
+    where: { userId, round: current.round, status: "voted" },
+    data: { status: "signed", signedAt: new Date() },
+  });
+  if (signed.count !== 1) return { ok: false, error: "공소 투표에 참여한 배심원만 서명할 수 있습니다. 이미 서명했다면 다시 할 필요가 없습니다." };
   return { ok: true };
 }
 

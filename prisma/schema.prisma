@@ -705,10 +705,14 @@ model Notification {
   payload   Json?
   link      String?
   readAt    DateTime? @map("read_at")
+  // 06 MVP 알림: 꼭 필요한 알림(서명 요청, 평결 요청 등)은 워커가 이메일로도 보냄
+  sendEmail Boolean   @default(false) @map("send_email")
+  emailedAt DateTime? @map("emailed_at")
   createdAt DateTime  @default(now()) @map("created_at")
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
+  @@index([sendEmail, emailedAt])
   @@map("notification")
 }
