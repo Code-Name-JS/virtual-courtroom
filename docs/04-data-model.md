@@ -128,7 +128,8 @@ erDiagram
 | `id` | id | 1행만 허용 |
 | `title` | text | 사건명 |
 | `summary` | text | 사건 개요 (비로그인에게도 공개) |
-| `body` | text | 사건 전문 |
+| `body` | text | 사건 전문. **운영자가 정리한 내용**으로, 사건 페이지의 기준 |
+| `ai_original_body` | text | AI가 만든 원본. 정리본과 함께 공개 |
 | `generated_by` | enum | `ai`, `operator` |
 | `ai_model` | text, 선택 | 사건을 생성한 AI 모델 |
 | `review_note` | text | 운영자 검수 기록 (실존 인물·사건 유사성 점검 결과) |
@@ -203,6 +204,7 @@ erDiagram
 | `round` | int | |
 | `voter_participation_id` | id | |
 | `candidate_participation_id` | id | 추천한 사람과 같은 진영이어야 함 |
+| `reason` | text | 추천 이유. 운영자가 선정할 때 참고 |
 | `created_at` | datetime | |
 
 #### `advocate` 최종 변론인 (진영별 1명)
@@ -211,9 +213,15 @@ erDiagram
 |---|---|---|
 | `id` | id | |
 | `round` · `side` | int · enum | |
-| `participation_id` | id | |
-| `ai_rationale` | text | AI가 이 사람을 고른 이유 (공개) |
+| `ai_recommended_participation_id` | id, 선택 | AI가 추천한 후보. AI가 응답하지 않았으면 비어 있음 |
+| `ai_rationale` | text, 선택 | AI의 추천 이유 (공개) |
+| `ai_request` · `ai_response` | text, 선택 | AI에 보낸 내용과 받은 답 원문 (기록용) |
+| `participation_id` | id | 운영자가 최종 선정한 변론인 |
+| `selected_by` | enum | `operator` 운영자 선정, `ai_default` 운영자가 기한 안에 선정하지 않아 AI 추천으로 확정, `vote_default` AI 추천도 운영자 선정도 없어 추천 표를 가장 많이 받은 후보로 확정 |
+| `operator_reason` | text, 선택 | 운영자의 선정 이유. AI 추천과 다른 사람을 선정하면 필수 (공개) |
 | `selected_at` | datetime | |
+
+한 번 저장하면 수정할 수 없습니다. 운영자의 선정 기회가 단 한 번이라는 규칙(01)을 데이터로 지키기 위해서입니다.
 
 #### `verdict_receipt` 평결 참여 여부 / `verdict_ballot` 평결 내용
 
@@ -369,6 +377,7 @@ erDiagram
 | 1심 배심원은 2심에서 진영 유지 | | round 2 `continued` 행의 `side` = round 1 `side` |
 | 변론인 후보 추천은 자기 측 후보에게만 | | 추천자와 후보의 `side`가 같은지 확인 |
 | 최종 변론인 · 최종 변론은 진영별 1명 · 1건 | `advocate`, `final_argument` (`round`, `side`) 유일 | |
+| 운영자의 최종 변론인 선정은 단 한 번 | `advocate` 행은 수정 불가 | AI 추천과 다른 사람을 고르면 `operator_reason` 필수. 단계 마감까지 선정하지 않으면 AI 추천으로 저장 |
 | 평결은 1인 1표, 개인 표 비공개 | `verdict_receipt.participation_id` 유일, `verdict_ballot`에 사람 정보 없음 | 같은 처리 안에서 두 테이블 기록 |
 | 판결은 심급별 1건 | `judgment.round` 유일 | |
 | 항소 신청은 1심 리뷰에서만 | | `round = 2`인 리뷰는 `is_appeal = false` |
