@@ -7,6 +7,8 @@ import { advanceDueStages } from "@/server/lifecycle";
 import { env } from "@/server/env";
 import { CaseForm, type CaseFormValues } from "./CaseForm";
 import { IndictForm } from "./IndictForm";
+import { AnnounceClosureForm, ExecuteClosureForm } from "./ClosureForms";
+import { caseHasEnded, draftClosureSummary, minimumClosureLeadMinutes } from "@/domain/closure";
 import { AdvocateSelectForm, JudgmentForm } from "./TrialAdminForms";
 import { requestAiAction } from "./actions";
 import { getSelectionView, getSentencingView, getTrialView } from "@/server/trial-service";
@@ -82,6 +84,7 @@ export default async function AdminCasePage() {
       </section>
       {current.status === "ADVOCATE_SELECTION" && <AdvocateAdmin />}
       {current.status === "SENTENCING" && <SentencingAdmin />}
+      {caseHasEnded(current.status) && <ClosureAdmin />}
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="font-semibold">단계 일정</h2>
         <table className="w-full text-sm">
@@ -165,6 +168,42 @@ async function SentencingAdmin() {
       </p>
       <p className="text-sm text-amber-900">평결을 참고해 무죄 또는 유죄(징역·집행유예·벌금)로 선고하고, 선고 이유를 함께 적어 주세요. 선고하면 판결이 확정됩니다 (MVP는 리뷰·2심 없음).</p>
       <JudgmentForm />
+    </section>
+  );
+}
+
+// 03 O-08 사이트 폐쇄
+async function ClosureAdmin() {
+  const current = await getCase();
+  if (!current) return null;
+  const judgment = await db.judgment.findFirst({ orderBy: { round: "desc" } });
+  const lead = minimumClosureLeadMinutes(env.demoMode);
+  const defaultAt = toKstInput(current.closureScheduledAt ?? new Date(Date.now() + (lead + (env.demoMode ? 1 : 24 * 60 * 2)) * 60 * 1000));
+  const summary = current.closureSummary ?? draftClosureSummary({ title: current.title, status: current.status, judgment });
+  const due = current.closureScheduledAt !== null && current.closureScheduledAt <= new Date();
+
+  return (
+    <section className="space-y-5 rounded-lg border border-red-200 bg-red-50 p-6">
+      <h2 className="font-semibold">사이트 폐쇄</h2>
+      <p className="text-sm text-red-900">
+        사건이 끝났습니다. 폐쇄 일시를 공지한 뒤, 그 일시가 지나면 폐쇄를 실행합니다. 폐쇄하면 회원 정보와 작성한 글이 모두 파기되고 종료 안내 페이지만 남습니다 (01, 05).
+      </p>
+      {current.closureScheduledAt && (
+        <p className="rounded bg-white px-3 py-2 text-sm">
+          공지한 폐쇄 일시: <strong>{dateFormat.format(current.closureScheduledAt)}</strong> {due ? "(지금 폐쇄할 수 있습니다)" : "(일시가 지나면 폐쇄할 수 있습니다)"}
+        </p>
+      )}
+      <div className="space-y-2 rounded bg-white p-4">
+        <p className="text-sm font-semibold">① 폐쇄 일시 {current.closureScheduledAt ? "다시 공지" : "공지"}</p>
+        <AnnounceClosureForm defaultSummary={summary} defaultAt={defaultAt} minLabel={env.demoMode ? "1분" : "하루"} />
+      </div>
+      {due && (
+        <div className="space-y-2 rounded bg-white p-4">
+          <p className="text-sm font-semibold">② 폐쇄 실행</p>
+          <p className="text-xs text-slate-600">실행 후 서버의 .env에서 IP_HASH_SECRET을 지우고, DB 백업본이 있다면 함께 파기하세요 (운영 안내서 참고).</p>
+          <ExecuteClosureForm />
+        </div>
+      )}
     </section>
   );
 }

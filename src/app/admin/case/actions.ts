@@ -1,11 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import type { FormState } from "@/components/form";
 import { type ChecklistKey, type DurationInput, MVP_STAGES, REVIEW_CHECKLIST } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
 import { indict, publishCase, saveDraft } from "@/server/case-service";
 import { chooseAdvocates, pronounce, requestRecommendations } from "@/server/trial-service";
+import { announceClosure, executeClosure } from "@/server/closure";
+import { db } from "@/server/db";
 import { env } from "@/server/env";
 
 function text(formData: FormData, name: string): string {
@@ -99,4 +102,26 @@ export async function pronounceAction(_prev: FormState, formData: FormData): Pro
   if (!result.ok) return { error: result.error };
   revalidatePath("/", "layout");
   return { message: "판결을 선고했습니다." };
+}
+
+export async function announceClosureAction(_prev: FormState, formData: FormData): Promise<FormState> {
+  const { user } = await requireOperator();
+  const at = text(formData, "scheduledAt");
+  const result = await announceClosure(
+    db,
+    user.id,
+    { scheduledAt: new Date(`${at}:00+09:00`), summary: text(formData, "summary") },
+    { demoMode: env.demoMode },
+  );
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  return { message: "폐쇄 일시를 공지했습니다. 모든 회원에게 알림과 이메일이 발송됩니다." };
+}
+
+export async function executeClosureAction(_prev: FormState): Promise<FormState> {
+  const { user } = await requireOperator();
+  const result = await executeClosure(db, user.id);
+  if (!result.ok) return { error: result.error };
+  revalidatePath("/", "layout");
+  redirect("/");
 }

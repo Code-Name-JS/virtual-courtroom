@@ -1,6 +1,7 @@
 import "server-only";
 import { notFound, redirect } from "next/navigation";
 import { checkIpAccess } from "@/domain/account";
+import { isSiteClosed } from "./closure";
 import { db } from "./db";
 import { env } from "./env";
 import { requireClientIpHash } from "./ip";
@@ -18,6 +19,7 @@ type RequireUserOptions = {
  * 이메일 인증을 마치지 않았으면 /verify-email, 등록 IP와 접속 IP가 다르면 /verify-ip로 보냅니다 (01, 05).
  */
 export async function requireUser(options: RequireUserOptions = {}) {
+  if (await isSiteClosed(db)) redirect("/");
   const session = await getSession();
   if (!session) redirect("/login");
   const { user } = session;

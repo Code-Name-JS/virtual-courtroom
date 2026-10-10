@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "next start",
     "worker": "tsx worker/index.ts",
+    "purge": "tsx scripts/purge.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "db:generate": "prisma generate",

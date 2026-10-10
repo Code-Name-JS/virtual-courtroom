@@ -9,6 +9,7 @@ import {
   hoursAgo,
   isStaleUnverified,
 } from "@/domain/account";
+import { isSiteClosed } from "./closure";
 import { db } from "./db";
 import { env } from "./env";
 import { consumeRateLimit } from "./rate-limit";
@@ -32,7 +33,10 @@ async function removeIfStaleUnverified(user: { id: string; emailVerifiedAt: Date
 }
 
 /** 회원가입 (01: 계정 하나, IP 하나에 계정 하나 / 05: 같은 IP 가입 시도 하루 3회) */
+const CLOSED_MESSAGE = "사건이 끝나 사이트가 폐쇄되었습니다.";
+
 export async function signUp(input: SignupInput, ipHash: string): Promise<Result<{ userId: string }>> {
+  if (await isSiteClosed(db)) return { ok: false, error: CLOSED_MESSAGE };
   if (!(await consumeRateLimit(`signup:${ipHash}`, SIGNUP_ATTEMPTS_PER_IP_PER_DAY, hoursAgo(24)))) {
     return { ok: false, error: "이 네트워크에서 오늘 가입을 시도할 수 있는 횟수를 넘었습니다. 내일 다시 시도해 주세요." };
   }
@@ -76,6 +80,7 @@ export async function signUp(input: SignupInput, ipHash: string): Promise<Result
 }
 
 export async function logIn(email: string, password: string, ipHash: string): Promise<Result<{ userId: string }>> {
+  if (await isSiteClosed(db)) return { ok: false, error: CLOSED_MESSAGE };
   if (!(await consumeRateLimit(`login:${ipHash}`, LOGIN_ATTEMPTS_PER_IP_PER_HOUR, hoursAgo(1)))) {
     return { ok: false, error: "로그인 시도가 너무 많습니다. 잠시 후 다시 시도해 주세요." };
   }

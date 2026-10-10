@@ -29,7 +29,11 @@ export default async function AdminPage() {
           ? "추천 투표가 끝나면 진영별 최종 변론인을 단 한 번 선정해 주세요."
           : current.status === "SENTENCING"
             ? "평결을 참고해 판결을 작성하고 선고해 주세요."
-            : null;
+            : current.status === "DISMISSED" || current.status === "FINALIZED"
+              ? current.closureScheduledAt
+                ? "공지한 폐쇄 일시가 지나면 사건 관리 화면에서 사이트 폐쇄를 실행해 주세요."
+                : "사건이 끝났습니다. 사건 관리 화면에서 사이트 폐쇄 일시를 공지해 주세요."
+              : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-10">

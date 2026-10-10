@@ -40,7 +40,15 @@ export function SignupForm() {
       </label>
 
       <p className="text-xs text-slate-500">
-        가입하면 서비스 제공에 꼭 필요한 정보(이메일, 닉네임, IP 해시 등)를 처리합니다. 자세한 내용은 개인정보처리방침에서 확인할 수 있습니다.
+        가입하면 서비스 제공에 꼭 필요한 정보(이메일, 닉네임, IP 해시 등)를 처리합니다. 자세한 내용은{" "}
+        <Link href="/privacy" target="_blank" className="underline">
+          개인정보처리방침
+        </Link>
+        과{" "}
+        <Link href="/terms" target="_blank" className="underline">
+          이용약관
+        </Link>
+        에서 확인할 수 있습니다.
       </p>
 
       <FormMessage state={state} />

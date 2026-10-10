@@ -1,0 +1,62 @@
+export const metadata = { title: "재판 진행 과정 · Virtual Courtroom" };
+
+// 03 A-02 재판 진행 과정 (01 핵심 흐름, 실제로는 이렇습니다)
+const STEPS = [
+  ["사건 공개", "운영자가 AI에게 사건 생성을 부탁해 정리한 뒤 공개합니다. \"AI가 만든 사건\"이라고 공지하고, AI 원본도 함께 공개합니다."],
+  ["공소 투표", "공소 제기와 불기소 중 하나에 투표합니다. 투표 중에는 득표율을 공개하지 않습니다. 참여자가 최소 인원에 못 미치거나 불기소가 더 많으면 사건은 폐기됩니다. 같으면 공소 제기입니다."],
+  ["공판준비 서명", "운영자가 공소를 제기하면, 투표한 배심원은 허구 사건이며 법률 자문이 아님을 확인하는 서명을 합니다. 서명하지 않으면 재판 단계부터 제외됩니다."],
+  ["증거 제출", "진영 게시판에 생각과 증거자료를 담은 스레드를 씁니다. 이 기간에는 자기 측 게시판만 볼 수 있고, 기간이 끝나면 양측 게시판이 모두 공개됩니다."],
+  ["최종 변론인 선정", "배심원이 이유와 함께 자기 측 후보를 추천하면, AI가 후보들의 글을 분석해 추천합니다. 운영자는 이를 참고해 진영별 1명을 단 한 번 선정합니다."],
+  ["최종 변론", "진영별 최종 변론인이 변론합니다. 실제 재판처럼 공소 제기 측이 먼저, 불기소 측이 나중에 합니다."],
+  ["배심원 평결", "모든 주장과 증거, 최종 변론을 보고 유죄 또는 무죄로 비공개 평결합니다. 개인 표는 공개되지 않습니다."],
+  ["판결 선고", "운영자가 평결을 참고해 무죄 또는 유죄(징역·집행유예·벌금)로 선고하고 이유를 밝힙니다. 공소 투표와 평결을 비교한 설득 지표도 함께 공개됩니다."],
+  ["사이트 폐쇄", "사건이 끝나면 운영자가 폐쇄 일시를 공지하고, 그 일시에 사이트를 폐쇄합니다."],
+] as const;
+
+const REALITY = [
+  ["공소 제기를 투표로 정함", "검사 (한국은 검사만 기소할 수 있음)"],
+  ["증거 제출, 변론 정보 공유", "검사, 변호인"],
+  ["최종 변론", "변호인·피고인 (검사는 논고·구형)"],
+  ["리뷰로 항소", "검사, 피고인 (배심원은 항소할 수 없음)"],
+] as const;
+
+export default function ProcessPage() {
+  return (
+    <>
+      <section>
+        <h2>진행 순서</h2>
+        <ol className="space-y-3">
+          {STEPS.map(([title, text], index) => (
+            <li key={title} className="!list-none rounded border border-slate-200 bg-white p-4">
+              <p className="font-semibold">
+                <span className="text-gold-600">{String(index + 1).padStart(2, "0")}</span> {title}
+              </p>
+              <p className="mt-1 text-sm text-slate-600">{text}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="text-sm text-slate-500">지금 버전은 테스트 기간(MVP)이라 리뷰와 2심(항소심) 없이 판결이 곧 확정됩니다.</p>
+      </section>
+      <section>
+        <h2>실제 재판과 다른 점</h2>
+        <p className="text-sm">실제 국민참여재판의 배심원은 듣고 판단하는 사람이라 증거를 내거나 변론하지 않습니다. 이 서비스는 모든 과정을 경험할 수 있도록 배심원이 여러 역할을 맡습니다.</p>
+        <table className="w-full text-sm">
+          <thead className="text-left text-slate-500">
+            <tr>
+              <th className="py-1">이 서비스에서 배심원이 하는 일</th>
+              <th>실제 법정에서 이 일을 하는 사람</th>
+            </tr>
+          </thead>
+          <tbody>
+            {REALITY.map(([action, who]) => (
+              <tr key={action} className="border-t border-slate-200">
+                <td className="py-2">{action}</td>
+                <td>{who}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </>
+  );
+}

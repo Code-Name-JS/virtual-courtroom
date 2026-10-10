@@ -2,7 +2,7 @@ import Link from "next/link";
 import { logoutAction } from "@/app/logout/actions";
 import { getCurrentUser } from "@/server/auth";
 
-// 03 상단 메뉴: 홈 · 서비스 소개 · 사건 · 공지사항 (서비스 소개는 M4에서 추가)
+// 03 상단 메뉴: 홈 · 서비스 소개 · 사건 · 공지사항
 export async function SiteHeader() {
   const user = await getCurrentUser();
 
@@ -14,6 +14,9 @@ export async function SiteHeader() {
           <span className="text-xs text-gold-400">시민 배심 시뮬레이터</span>
         </Link>
         <nav className="flex flex-wrap items-center justify-end gap-2 text-sm">
+          <Link href="/about" className="rounded px-3 py-2 hover:bg-navy-800">
+            서비스 소개
+          </Link>
           <Link href="/case" className="rounded px-3 py-2 hover:bg-navy-800">
             사건
           </Link>

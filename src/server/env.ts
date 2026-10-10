@@ -45,6 +45,20 @@ export const env = {
       from: process.env.MAIL_FROM ?? "Virtual Courtroom <no-reply@example.com>",
     };
   },
+  // 이용약관 · 개인정보처리방침에 들어가는 운영자 정보 (03 L-01, L-02, 05 개인정보처리방침에 반드시 적을 내용)
+  get operatorName() {
+    return process.env.OPERATOR_NAME?.trim() || null;
+  },
+  get operatorContactEmail() {
+    return process.env.OPERATOR_CONTACT_EMAIL?.trim() || null;
+  },
+  get privacyProcessors() {
+    return process.env.PRIVACY_PROCESSORS?.trim() || null;
+  },
+  /** 운영자가 이용약관과 개인정보처리방침의 법률 검토를 마쳤는지. false면 "기본 템플릿" 안내를 띄움 */
+  get legalDocsReviewed() {
+    return process.env.LEGAL_DOCS_REVIEWED === "true";
+  },
   isProduction,
   // 시연 모드와 IP 규칙 끄기는 실제 배포(production)에서는 절대 켜지지 않음 (06 시연 모드)
   get demoMode() {
