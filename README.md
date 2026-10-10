@@ -64,7 +64,7 @@ AI 사건 생성 → 공소 투표 → 공판준비 서명 → 증거 제출 →
 - [x] 05. 정책 · 리스크
 - [x] 06. MVP 범위 · 기술 스택
 - [x] M0 기반 (프로젝트 생성, DB, 회원가입·로그인, IP 규칙, 관리자 2단계 인증)
-- [ ] M1 사건 게시 · 공소 투표
+- [x] M1 사건 게시 · 공소 투표
 - [ ] M2 공판준비 서명 · 진영 게시판
 - [ ] M3 최종 변론 · 평결 · 판결
 - [ ] M4 사이트 폐쇄 · 마무리
@@ -87,7 +87,8 @@ virtual-courtroom/
 │   └── migrations/               DB 테이블 생성 SQL
 ├── tests/                        단위 테스트
 ├── Dockerfile
-├── docker-compose.yml            앱 + DB + Caddy(HTTPS)
+├── worker/                       단계 자동 전환 워커
+├── docker-compose.yml            앱 + 워커 + DB + Caddy(HTTPS)
 ├── Caddyfile
 ├── .env.example                  환경 변수 예시
 ├── LICENSE
@@ -120,9 +121,16 @@ npx prisma migrate deploy
 npm run dev
 ```
 
+단계 자동 전환 워커는 다른 터미널에서 실행합니다. 워커를 켜지 않아도 사건 페이지를 열 때 마감이 지난 단계는 넘어가지만, 실제 운영에서는 반드시 워커를 함께 실행합니다.
+
+```bash
+npm run worker
+```
+
 - `http://localhost:3000`에서 확인합니다.
 - `SMTP_HOST`를 비워 두면 인증 코드 이메일이 터미널에 출력됩니다.
 - PostgreSQL이 없다면 `npx prisma dev`로 로컬 개발용 DB를 띄울 수 있습니다. 이 DB는 연결을 하나만 받으므로 `DATABASE_URL` 끝에 `&connection_limit=1&pgbouncer=true`를 붙여 주세요.
+- 시연 모드(`DEMO_MODE=true`)에서는 사건 기간을 분 단위로, 최소 참여 인원을 1명부터 설정할 수 있어 흐름을 빠르게 확인할 수 있습니다.
 - 테스트 계정을 여러 개 만들어야 하면 `.env`에서 `DEMO_MODE=true`, `DISABLE_IP_RULE=true`로 IP 규칙을 끌 수 있습니다. 실제 배포(`NODE_ENV=production`)에서는 이 설정이 무시됩니다.
 
 ### 서버에 배포하기 (Docker Compose)
@@ -147,6 +155,12 @@ npm test
 
 ```bash
 npm run typecheck
+```
+
+DB가 필요한 통합 테스트는 **테스트 전용 DB**를 지정했을 때만 실행됩니다. 이 DB의 데이터는 모두 지워집니다.
+
+```bash
+TEST_DATABASE_URL="postgresql://..." npm test
 ```
 
 ## 배포와 운영

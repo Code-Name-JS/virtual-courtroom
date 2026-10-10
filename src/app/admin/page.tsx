@@ -1,12 +1,25 @@
+import Link from "next/link";
+import { STATUS_LABELS } from "@/domain/case";
 import { requireOperator } from "@/server/auth";
+import { getCase } from "@/server/case-service";
 import { db } from "@/server/db";
 
 export const metadata = { title: "관리자 · Virtual Courtroom" };
 
-// 03 O-01 대시보드. 사건 관리 기능은 M1부터 추가
+// 03 O-01 대시보드
 export default async function AdminPage() {
   await requireOperator();
-  const [members, verified] = await Promise.all([db.user.count(), db.user.count({ where: { emailVerifiedAt: { not: null } } })]);
+  const [members, verified, current] = await Promise.all([
+    db.user.count(),
+    db.user.count({ where: { emailVerifiedAt: { not: null } } }),
+    getCase(),
+  ]);
+  const todo =
+    !current || current.status === "DRAFT"
+      ? "사건을 만들어 검수한 뒤 게시해 주세요."
+      : current.status === "INDICTMENT_PENDING"
+        ? "공소를 제기해 재판을 시작해 주세요. (M2에서 추가)"
+        : null;
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 px-4 py-10">
@@ -21,8 +34,15 @@ export default async function AdminPage() {
           <p className="text-2xl font-bold">{verified}명</p>
         </div>
       </section>
-      <section className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-sm text-slate-600">
-        사건 생성·검수와 사건 관리 기능은 다음 단계(M1)에서 추가됩니다.
+      <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
+        <h2 className="font-semibold">운영자의 조치가 필요한 일</h2>
+        <p className="text-sm">
+          사건 상태: <strong>{current ? STATUS_LABELS[current.status] : "사건 없음"}</strong>
+        </p>
+        {todo ? <p className="rounded bg-amber-50 px-3 py-2 text-sm text-amber-800">{todo}</p> : <p className="text-sm text-slate-600">지금은 조치할 일이 없습니다.</p>}
+        <Link href="/admin/case" className="inline-block rounded bg-navy-900 px-4 py-2 text-sm font-semibold text-white hover:bg-navy-800">
+          {!current || current.status === "DRAFT" ? "사건 만들기" : "사건 관리"}
+        </Link>
       </section>
     </div>
   );

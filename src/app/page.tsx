@@ -1,4 +1,7 @@
 import Link from "next/link";
+import { Countdown } from "@/components/Countdown";
+import { STATUS_LABELS } from "@/domain/case";
+import { getCaseView } from "@/server/case-service";
 
 // 01 핵심 흐름을 홈 화면용으로 줄인 단계
 const STEPS = [
@@ -10,8 +13,10 @@ const STEPS = [
   { title: "판결", text: "운영자가 평결을 참고해 판결을 선고합니다" },
 ];
 
-// 03 H-01 홈. 사건 요약은 M1에서 추가
-export default function HomePage() {
+// 03 H-01 홈
+export default async function HomePage() {
+  const view = await getCaseView(null);
+
   return (
     <>
       <section className="bg-navy-950 text-white">
@@ -25,8 +30,8 @@ export default function HomePage() {
             AI가 만든 가상 사건의 배심원이 되어, 증거와 논리로 사건의 결말을 증명하는 법정 시뮬레이션입니다.
           </p>
           <div className="flex flex-wrap gap-3">
-            <Link href="/signup" className="rounded bg-gold-500 px-5 py-2.5 font-semibold text-navy-950 hover:bg-gold-400">
-              배심원으로 참여하기
+            <Link href={view ? "/case" : "/signup"} className="rounded bg-gold-500 px-5 py-2.5 font-semibold text-navy-950 hover:bg-gold-400">
+              사건 참여하기
             </Link>
           </div>
         </div>
@@ -39,9 +44,26 @@ export default function HomePage() {
 
       <section className="mx-auto max-w-5xl space-y-4 px-4 py-12">
         <h2 className="text-xl font-bold">진행 중인 사건</h2>
-        <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-slate-600">
-          곧 사건이 공개됩니다.
-        </div>
+        {view ? (
+          <Link href="/case" className="block space-y-3 rounded-lg border border-slate-200 bg-white p-6 hover:border-gold-500">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="rounded bg-gold-500/15 px-2 py-0.5 text-xs font-semibold text-gold-600">AI가 만든 사건</span>
+              <span className="rounded bg-navy-900 px-2 py-0.5 text-xs font-semibold text-white">{STATUS_LABELS[view.case.status]}</span>
+            </div>
+            <h3 className="text-lg font-bold">{view.case.title}</h3>
+            <p className="line-clamp-2 text-sm text-slate-600">{view.case.summary}</p>
+            <div className="flex flex-wrap gap-4 text-sm text-slate-600">
+              <span>공소 투표 참여 {view.voteCount}명</span>
+              {view.deadline && view.stageKind === "timed" && (
+                <span>
+                  마감까지 <Countdown deadline={view.deadline.toISOString()} />
+                </span>
+              )}
+            </div>
+          </Link>
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-300 bg-white p-8 text-center text-slate-600">곧 사건이 공개됩니다.</div>
+        )}
       </section>
 
       <section className="bg-white">

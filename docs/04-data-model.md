@@ -133,6 +133,8 @@ erDiagram
 | `ai_original_body` | text | AI가 만든 원본. 정리본과 함께 공개 |
 | `generated_by` | enum | `ai`, `operator` |
 | `ai_model` | text, 선택 | 사건을 생성한 AI 모델 |
+| `ai_generated_at` | datetime, 선택 | AI가 사건을 생성한 일시 (05 검수 체크리스트) |
+| `review_checklist` | json, 선택 | 05 게시 전 검수 체크리스트에서 확인한 항목 |
 | `review_note` | text | 운영자 검수 기록 (실존 인물·사건 유사성 점검 결과) |
 | `status` | enum | 02의 15개 상태 코드 (`DRAFT` ~ `SITE_CLOSED`) |
 | `round` | int | 현재 심급 (1 또는 2) |

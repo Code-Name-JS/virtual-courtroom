@@ -42,6 +42,21 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  # 1분마다 마감이 지난 단계를 다음 단계로 넘깁니다 (06 단계 자동 전환)
+  worker:
+    build:
+      context: .
+      target: build
+    restart: unless-stopped
+    command: ["npm", "run", "worker"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      NODE_ENV: production
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
   # HTTPS 인증서를 자동으로 발급하고, 실제 접속 IP를 X-Real-IP에 담아 앱에 전달
   caddy:
     image: caddy:2-alpine
