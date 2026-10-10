@@ -1,0 +1,9 @@
+{$SITE_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy app:3000 {
+		# 사용자가 보낸 값을 덮어쓰고, Caddy가 본 실제 접속 IP만 앱에 전달합니다.
+		# IP 하나에 계정 하나 규칙의 신뢰도가 이 설정에 달려 있습니다 (06 기술적으로 주의할 점).
+		header_up X-Real-IP {remote_host}
+	}
+}

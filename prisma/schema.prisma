@@ -1,0 +1,711 @@
+// 04. 데이터 모델 (docs/04-data-model.md)을 옮긴 스키마입니다.
+// 테이블과 컬럼 이름은 문서와 같은 snake_case로 저장하고, 코드에서는 camelCase로 씁니다.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── 열거형 ──────────────────────────────────────────────
+
+enum Role {
+  member
+  operator
+}
+
+// 02의 15개 상태
+enum CaseStatus {
+  DRAFT
+  INDICTMENT_VOTE
+  DISMISSED
+  INDICTMENT_PENDING
+  PRETRIAL
+  EVIDENCE
+  ADVOCATE_SELECTION
+  FINAL_ARGUMENT
+  DELIBERATION
+  SENTENCING
+  REVIEW
+  APPEAL_DECISION
+  APPEAL_RECRUITMENT
+  FINALIZED
+  SITE_CLOSED
+}
+
+enum Side {
+  indict
+  dismiss
+}
+
+enum GeneratedBy {
+  ai
+  operator
+}
+
+enum ActorType {
+  system
+  operator
+  ai
+}
+
+enum CaseDecision {
+  dismiss_for_quorum
+  indict
+  select_advocate
+  pronounce
+  open_appeal
+  reject_appeal
+  correct_case
+  extend_for_outage
+  close_site
+}
+
+enum JoinedVia {
+  indictment_vote
+  continued
+  appeal_application
+}
+
+enum ParticipationStatus {
+  voted
+  signed
+  excluded
+  advocate
+  done
+}
+
+enum ExcludedReason {
+  unsigned
+  sanction
+  declined_round2
+}
+
+enum IpChangeResult {
+  approved
+  blocked_in_use
+  failed_verification
+}
+
+enum VerificationPurpose {
+  signup
+  ip_change
+}
+
+enum GuardianConsentStatus {
+  pending
+  consented
+  refused
+  expired
+}
+
+enum AdvocateSelectedBy {
+  operator
+  ai_default
+  vote_default
+}
+
+enum VerdictChoice {
+  guilty
+  not_guilty
+}
+
+enum EvidenceType {
+  link
+  image
+  text
+}
+
+enum ReportReason {
+  leak
+  abuse
+  other
+}
+
+enum ReportStatus {
+  open
+  reviewing
+  resolved
+  rejected
+}
+
+enum DetectionType {
+  copy_similarity
+  abnormal_view
+  watermark_match
+}
+
+enum DetectionStatus {
+  open
+  confirmed
+  dismissed
+}
+
+enum SanctionLevel {
+  warning
+  write_ban
+  excluded
+}
+
+// 05 위반 유형별 제재
+enum Violation {
+  leak
+  leak_post
+  mass_leak
+  multi_account
+  abuse
+}
+
+enum AppealStatus {
+  pending
+  accepted
+  rejected
+}
+
+enum JudgmentOutcome {
+  guilty
+  not_guilty
+}
+
+enum SentenceType {
+  prison
+  probation
+  fine
+}
+
+enum ApplicationStatus {
+  pending
+  approved
+  rejected
+}
+
+// ─── 1. 회원과 사이트 ────────────────────────────────────
+
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  emailVerifiedAt DateTime? @map("email_verified_at")
+  passwordHash    String    @map("password_hash")
+  nickname        String    @unique
+  role            Role      @default(member)
+  isUnder14       Boolean   @default(false) @map("is_under_14")
+  // 관리자 2단계 인증 (05 IP · 계정 정책). 비밀 값은 암호화해 저장
+  totpSecretEnc   String?   @map("totp_secret_enc")
+  totpEnabledAt   DateTime? @map("totp_enabled_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  sessions            Session[]
+  ipBinding           IpBinding?
+  ipChangeLogs        IpChangeLog[]
+  emailVerifications  EmailVerification[]
+  guardianConsent     GuardianConsent?
+  participations      Participation[]
+  indictmentVote      IndictmentVote?
+  viewLogs            ViewLog[]
+  reports             Report[]            @relation("Reporter")
+  handledReports      Report[]            @relation("ReportHandler")
+  sanctions           Sanction[]          @relation("SanctionTarget")
+  issuedSanctions     Sanction[]          @relation("SanctionIssuer")
+  reviewComments      ReviewComment[]
+  appealApplication   AppealApplication?
+  notifications       Notification[]
+  notices             Notice[]
+  caseEvents          CaseEvent[]
+
+  @@map("user")
+}
+
+// 구현용: 로그인 세션. 토큰 원문은 쿠키에만 있고 DB에는 해시만 저장
+model Session {
+  id           String   @id @default(uuid())
+  tokenHash    String   @unique @map("token_hash")
+  userId       String   @map("user_id")
+  totpVerified Boolean  @default(false) @map("totp_verified")
+  createdAt    DateTime @default(now()) @map("created_at")
+  expiresAt    DateTime @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+// 계정 하나에 IP 하나, IP 하나에 계정 하나
+model IpBinding {
+  userId     String   @id @map("user_id")
+  ipHash     String   @unique @map("ip_hash")
+  verifiedAt DateTime @map("verified_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("ip_binding")
+}
+
+model IpChangeLog {
+  id        String         @id @default(uuid())
+  userId    String         @map("user_id")
+  oldIpHash String?        @map("old_ip_hash")
+  newIpHash String         @map("new_ip_hash")
+  result    IpChangeResult
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("ip_change_log")
+}
+
+model EmailVerification {
+  id            String              @id @default(uuid())
+  userId        String              @map("user_id")
+  purpose       VerificationPurpose
+  codeHash      String              @map("code_hash")
+  pendingIpHash String?             @map("pending_ip_hash")
+  attempts      Int                 @default(0)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  expiresAt     DateTime            @map("expires_at")
+  usedAt        DateTime?           @map("used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+  @@map("email_verification")
+}
+
+model GuardianConsent {
+  id            String                @id @default(uuid())
+  userId        String                @unique @map("user_id")
+  guardianName  String                @map("guardian_name")
+  guardianEmail String                @map("guardian_email")
+  tokenHash     String                @unique @map("token_hash")
+  status        GuardianConsentStatus @default(pending)
+  requestedAt   DateTime              @default(now()) @map("requested_at")
+  respondedAt   DateTime?             @map("responded_at")
+  expiresAt     DateTime              @map("expires_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("guardian_consent")
+}
+
+// 구현용: 요청 횟수 제한 (05: 같은 IP에서 가입 시도 하루 3회 등)
+model RateLimitEvent {
+  id        String   @id @default(uuid())
+  key       String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([key, createdAt])
+  @@map("rate_limit_event")
+}
+
+// 사건은 사이트당 1건. id는 1로 고정 (마이그레이션에서 CHECK 제약 추가)
+model Case {
+  id                 Int         @id @default(1)
+  title              String
+  summary            String
+  body               String
+  aiOriginalBody     String      @map("ai_original_body")
+  generatedBy        GeneratedBy @default(ai) @map("generated_by")
+  aiModel            String?     @map("ai_model")
+  reviewNote         String?     @map("review_note")
+  status             CaseStatus  @default(DRAFT)
+  round              Int         @default(1)
+  minParticipants    Int         @default(50) @map("min_participants")
+  maxParticipants    Int?        @map("max_participants")
+  appealCriteria     String?     @map("appeal_criteria")
+  publishedAt        DateTime?   @map("published_at")
+  closureScheduledAt DateTime?   @map("closure_scheduled_at")
+  closureSummary     String?     @map("closure_summary")
+  closedAt           DateTime?   @map("closed_at")
+  createdAt          DateTime    @default(now()) @map("created_at")
+
+  stageSchedules StageSchedule[]
+  events         CaseEvent[]
+
+  @@map("case")
+}
+
+model StageSchedule {
+  id              String     @id @default(uuid())
+  caseId          Int        @default(1) @map("case_id")
+  round           Int
+  stage           CaseStatus
+  // 분 단위 (시연 모드에서 분 단위로 줄일 수 있도록)
+  durationMinutes Int        @map("duration_minutes")
+  startsAt        DateTime?  @map("starts_at")
+  endsAt          DateTime?  @map("ends_at")
+
+  case Case @relation(fields: [caseId], references: [id], onDelete: Cascade)
+
+  @@unique([round, stage])
+  @@map("stage_schedule")
+}
+
+// 수정·삭제하지 않는 기록
+model CaseEvent {
+  id          String        @id @default(uuid())
+  caseId      Int           @default(1) @map("case_id")
+  round       Int
+  fromStatus  CaseStatus?   @map("from_status")
+  toStatus    CaseStatus?   @map("to_status")
+  actorType   ActorType     @map("actor_type")
+  actorUserId String?       @map("actor_user_id")
+  decision    CaseDecision?
+  reason      String?
+  isPublic    Boolean       @default(true) @map("is_public")
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  case      Case  @relation(fields: [caseId], references: [id], onDelete: Cascade)
+  actorUser User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("case_event")
+}
+
+// ─── 2. 참여와 투표 ──────────────────────────────────────
+
+model Participation {
+  id             String              @id @default(uuid())
+  userId         String              @map("user_id")
+  round          Int
+  side           Side
+  joinedVia      JoinedVia           @map("joined_via")
+  status         ParticipationStatus
+  signedAt       DateTime?           @map("signed_at")
+  excludedReason ExcludedReason?     @map("excluded_reason")
+  createdAt      DateTime            @default(now()) @map("created_at")
+
+  user                 User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  nominationsGiven     AdvocateNomination[] @relation("Voter")
+  nominationsReceived  AdvocateNomination[] @relation("Candidate")
+  advocateAsSelected   Advocate[]           @relation("SelectedAdvocate")
+  advocateAsAiPick     Advocate[]           @relation("AiRecommended")
+  verdictReceipt       VerdictReceipt?
+  posts                Post[]
+  reviews              Review[]
+
+  @@unique([userId, round])
+  @@map("participation")
+}
+
+model IndictmentVote {
+  id      String   @id @default(uuid())
+  userId  String   @unique @map("user_id")
+  choice  Side
+  votedAt DateTime @default(now()) @map("voted_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("indictment_vote")
+}
+
+model AdvocateNomination {
+  id                       String   @id @default(uuid())
+  round                    Int
+  voterParticipationId     String   @map("voter_participation_id")
+  candidateParticipationId String   @map("candidate_participation_id")
+  reason                   String
+  createdAt                DateTime @default(now()) @map("created_at")
+
+  voter     Participation @relation("Voter", fields: [voterParticipationId], references: [id], onDelete: Cascade)
+  candidate Participation @relation("Candidate", fields: [candidateParticipationId], references: [id], onDelete: Cascade)
+
+  @@unique([voterParticipationId, round])
+  @@map("advocate_nomination")
+}
+
+// 한 번 저장하면 수정하지 않음 (운영자의 선정은 단 한 번)
+model Advocate {
+  id                           String             @id @default(uuid())
+  round                        Int
+  side                         Side
+  aiRecommendedParticipationId String?            @map("ai_recommended_participation_id")
+  aiRationale                  String?            @map("ai_rationale")
+  aiRequest                    String?            @map("ai_request")
+  aiResponse                   String?            @map("ai_response")
+  participationId              String             @map("participation_id")
+  selectedBy                   AdvocateSelectedBy @map("selected_by")
+  operatorReason               String?            @map("operator_reason")
+  selectedAt                   DateTime           @default(now()) @map("selected_at")
+
+  participation   Participation  @relation("SelectedAdvocate", fields: [participationId], references: [id], onDelete: Cascade)
+  aiRecommended   Participation? @relation("AiRecommended", fields: [aiRecommendedParticipationId], references: [id], onDelete: SetNull)
+  finalArgument   FinalArgument?
+
+  @@unique([round, side])
+  @@map("advocate")
+}
+
+// 평결 참여 여부: 누가 투표했는지만 저장
+model VerdictReceipt {
+  participationId String @id @map("participation_id")
+  round           Int
+
+  participation Participation @relation(fields: [participationId], references: [id], onDelete: Cascade)
+
+  @@map("verdict_receipt")
+}
+
+// 평결 내용: 사람·시각 정보 없이 무작위 ID와 선택만 저장 (04 설계 원칙 3)
+model VerdictBallot {
+  id     String        @id @default(uuid())
+  round  Int
+  choice VerdictChoice
+
+  @@index([round])
+  @@map("verdict_ballot")
+}
+
+// ─── 3. 진영 게시판 ──────────────────────────────────────
+
+model Post {
+  id                    String    @id @default(uuid())
+  round                 Int
+  side                  Side
+  authorParticipationId String    @map("author_participation_id")
+  rootPostId            String?   @map("root_post_id")
+  parentPostId          String?   @map("parent_post_id")
+  body                  String
+  isHidden              Boolean   @default(false) @map("is_hidden")
+  hiddenReason          String?   @map("hidden_reason")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+
+  author    Participation  @relation(fields: [authorParticipationId], references: [id], onDelete: Cascade)
+  root      Post?          @relation("ThreadRoot", fields: [rootPostId], references: [id], onDelete: SetNull)
+  threadAll Post[]         @relation("ThreadRoot")
+  parent    Post?          @relation("ThreadParent", fields: [parentPostId], references: [id], onDelete: SetNull)
+  replies   Post[]         @relation("ThreadParent")
+  revisions PostRevision[]
+  evidence  Evidence[]
+  viewLogs  ViewLog[]
+  reports   Report[]
+  detectionsAsTarget LeakDetection[] @relation("DetectionTarget")
+  detectionsAsSource LeakDetection[] @relation("DetectionSource")
+
+  @@index([round, side, createdAt])
+  @@map("post")
+}
+
+model PostRevision {
+  id        String   @id @default(uuid())
+  postId    String   @map("post_id")
+  body      String
+  revisedAt DateTime @default(now()) @map("revised_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("post_revision")
+}
+
+model Evidence {
+  id           String       @id @default(uuid())
+  postId       String       @map("post_id")
+  type         EvidenceType
+  urlOrFileKey String       @map("url_or_file_key")
+  sourceNote   String       @map("source_note")
+  createdAt    DateTime     @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@map("evidence")
+}
+
+model FinalArgument {
+  id          String   @id @default(uuid())
+  round       Int
+  side        Side
+  advocateId  String   @unique @map("advocate_id")
+  body        String
+  submittedAt DateTime @default(now()) @map("submitted_at")
+
+  advocate Advocate @relation(fields: [advocateId], references: [id], onDelete: Cascade)
+
+  @@unique([round, side])
+  @@map("final_argument")
+}
+
+// ─── 4. 정보 유출과 제재 ─────────────────────────────────
+
+model ViewLog {
+  id            String   @id @default(uuid())
+  userId        String   @map("user_id")
+  postId        String   @map("post_id")
+  watermarkCode String   @map("watermark_code")
+  viewedAt      DateTime @default(now()) @map("viewed_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([watermarkCode])
+  @@index([userId, viewedAt])
+  @@map("view_log")
+}
+
+model Report {
+  id             String       @id @default(uuid())
+  reporterUserId String       @map("reporter_user_id")
+  targetPostId   String       @map("target_post_id")
+  reason         ReportReason
+  detail         String
+  status         ReportStatus @default(open)
+  handledBy      String?      @map("handled_by")
+  handledAt      DateTime?    @map("handled_at")
+  resolutionNote String?      @map("resolution_note")
+  createdAt      DateTime     @default(now()) @map("created_at")
+
+  reporter   User       @relation("Reporter", fields: [reporterUserId], references: [id], onDelete: Cascade)
+  handler    User?      @relation("ReportHandler", fields: [handledBy], references: [id], onDelete: SetNull)
+  targetPost Post       @relation(fields: [targetPostId], references: [id], onDelete: Cascade)
+  sanctions  Sanction[]
+
+  @@map("report")
+}
+
+model LeakDetection {
+  id            String          @id @default(uuid())
+  type          DetectionType
+  targetPostId  String?         @map("target_post_id")
+  sourcePostId  String?         @map("source_post_id")
+  suspectUserId String?         @map("suspect_user_id")
+  score         Int
+  status        DetectionStatus @default(open)
+  detectedAt    DateTime        @default(now()) @map("detected_at")
+
+  targetPost Post?      @relation("DetectionTarget", fields: [targetPostId], references: [id], onDelete: SetNull)
+  sourcePost Post?      @relation("DetectionSource", fields: [sourcePostId], references: [id], onDelete: SetNull)
+  sanctions  Sanction[]
+
+  @@map("leak_detection")
+}
+
+model Sanction {
+  id          String        @id @default(uuid())
+  userId      String        @map("user_id")
+  round       Int
+  level       SanctionLevel
+  violation   Violation
+  reason      String
+  reportId    String?       @map("report_id")
+  detectionId String?       @map("detection_id")
+  issuedBy    String        @map("issued_by")
+  issuedAt    DateTime      @default(now()) @map("issued_at")
+
+  user      User            @relation("SanctionTarget", fields: [userId], references: [id], onDelete: Cascade)
+  issuer    User            @relation("SanctionIssuer", fields: [issuedBy], references: [id], onDelete: Cascade)
+  report    Report?         @relation(fields: [reportId], references: [id], onDelete: SetNull)
+  detection LeakDetection?  @relation(fields: [detectionId], references: [id], onDelete: SetNull)
+  appeal    SanctionAppeal?
+
+  @@map("sanction")
+}
+
+model SanctionAppeal {
+  id           String       @id @default(uuid())
+  sanctionId   String       @unique @map("sanction_id")
+  body         String
+  status       AppealStatus @default(pending)
+  decidedBy    String?      @map("decided_by")
+  decisionNote String?      @map("decision_note")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  decidedAt    DateTime?    @map("decided_at")
+
+  sanction Sanction @relation(fields: [sanctionId], references: [id], onDelete: Cascade)
+
+  @@map("sanction_appeal")
+}
+
+// ─── 5. 판결, 리뷰, 2심 ──────────────────────────────────
+
+model Judgment {
+  id                  String          @id @default(uuid())
+  round               Int             @unique
+  outcome             JudgmentOutcome
+  sentenceType        SentenceType?   @map("sentence_type")
+  sentenceDetail      String?         @map("sentence_detail")
+  reasoning           String
+  baselineIndictRatio Float           @map("baseline_indict_ratio")
+  verdictGuilty       Int             @map("verdict_guilty")
+  verdictNotGuilty    Int             @map("verdict_not_guilty")
+  pronouncedBy        String          @map("pronounced_by")
+  pronouncedAt        DateTime        @default(now()) @map("pronounced_at")
+
+  @@map("judgment")
+}
+
+model Review {
+  id                    String   @id @default(uuid())
+  round                 Int
+  authorParticipationId String   @map("author_participation_id")
+  body                  String
+  rating                Int?
+  isAppeal              Boolean  @default(false) @map("is_appeal")
+  createdAt             DateTime @default(now()) @map("created_at")
+
+  author   Participation   @relation(fields: [authorParticipationId], references: [id], onDelete: Cascade)
+  comments ReviewComment[]
+
+  @@unique([authorParticipationId, round])
+  @@map("review")
+}
+
+model ReviewComment {
+  id           String   @id @default(uuid())
+  reviewId     String   @map("review_id")
+  authorUserId String   @map("author_user_id")
+  body         String
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  review Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  author User   @relation(fields: [authorUserId], references: [id], onDelete: Cascade)
+
+  @@map("review_comment")
+}
+
+model AppealApplication {
+  id            String            @id @default(uuid())
+  userId        String            @unique @map("user_id")
+  requestedSide Side              @map("requested_side")
+  status        ApplicationStatus @default(pending)
+  reviewedBy    String?           @map("reviewed_by")
+  reviewedAt    DateTime?         @map("reviewed_at")
+  note          String?
+  createdAt     DateTime          @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("appeal_application")
+}
+
+// ─── 6. 공지와 알림 ──────────────────────────────────────
+
+model Notice {
+  id           String   @id @default(uuid())
+  title        String
+  body         String
+  authorUserId String?  @map("author_user_id")
+  isPinned     Boolean  @default(false) @map("is_pinned")
+  publishedAt  DateTime @default(now()) @map("published_at")
+
+  author User? @relation(fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@map("notice")
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  type      String
+  payload   Json?
+  link      String?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@map("notification")
+}

@@ -1,0 +1,18 @@
+@import "tailwindcss";
+
+/* 홈페이지 시안 01의 색: 남색 배경 + 금색 강조 */
+@theme {
+  --color-navy-950: #0b1322;
+  --color-navy-900: #111c30;
+  --color-navy-800: #1b2a45;
+  --color-gold-400: #d8b56f;
+  --color-gold-500: #c9a45c;
+  --color-gold-600: #a9853f;
+  --color-indict: #2f5fd0;
+  --color-dismiss: #d9534f;
+  --font-sans: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, sans-serif;
+}
+
+body {
+  @apply bg-slate-50 text-slate-900 antialiased;
+}

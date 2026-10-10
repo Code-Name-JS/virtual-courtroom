@@ -63,7 +63,7 @@ AI 사건 생성 → 공소 투표 → 공판준비 서명 → 증거 제출 →
 - [x] 04. 데이터 모델
 - [x] 05. 정책 · 리스크
 - [x] 06. MVP 범위 · 기술 스택
-- [ ] M0 기반 (프로젝트 생성, DB, 회원가입·로그인, IP 규칙)
+- [x] M0 기반 (프로젝트 생성, DB, 회원가입·로그인, IP 규칙, 관리자 2단계 인증)
 - [ ] M1 사건 게시 · 공소 투표
 - [ ] M2 공판준비 서명 · 진영 게시판
 - [ ] M3 최종 변론 · 평결 · 판결
@@ -76,15 +76,77 @@ M0~M4(MVP)는 **테스트 기간**입니다. MVP 버전에서는 항소(리뷰)�
 
 ```text
 virtual-courtroom/
-├── docs/                         기획 문서
-│   ├── 01-service-definition.md
-│   ├── 02-case-lifecycle.md
-│   ├── 03-information-architecture.md
-│   ├── 04-data-model.md
-│   ├── 05-policy-and-risk.md
-│   └── 06-mvp-and-tech-stack.md
+├── docs/                         기획 문서 (01~06)
+├── src/
+│   ├── app/                      화면과 서버 처리 (Next.js)
+│   ├── domain/                   서비스 규칙 (화면과 분리해 테스트)
+│   ├── server/                   DB, 세션, 이메일, IP 확인, 2단계 인증
+│   └── components/               화면 부품
+├── prisma/
+│   ├── schema.prisma             04 데이터 모델
+│   └── migrations/               DB 테이블 생성 SQL
+├── tests/                        단위 테스트
+├── Dockerfile
+├── docker-compose.yml            앱 + DB + Caddy(HTTPS)
+├── Caddyfile
+├── .env.example                  환경 변수 예시
 ├── LICENSE
 └── README.md
+```
+
+## 🛠️ 개발과 배포
+
+> 아래 방법은 06의 추천 기술 스택 기준입니다. 기술 스택은 배포하는 사람이 자유롭게 바꿀 수 있습니다.
+
+### 로컬에서 실행하기
+
+필요한 것: Node.js 24, PostgreSQL
+
+```bash
+cp .env.example .env
+```
+
+`.env`에서 `DATABASE_URL`, `SESSION_SECRET`, `IP_HASH_SECRET`(각각 32자 이상), `OPERATOR_EMAIL`을 채운 뒤 아래 명령을 차례로 실행합니다.
+
+```bash
+npm install
+```
+
+```bash
+npx prisma migrate deploy
+```
+
+```bash
+npm run dev
+```
+
+- `http://localhost:3000`에서 확인합니다.
+- `SMTP_HOST`를 비워 두면 인증 코드 이메일이 터미널에 출력됩니다.
+- PostgreSQL이 없다면 `npx prisma dev`로 로컬 개발용 DB를 띄울 수 있습니다. 이 DB는 연결을 하나만 받으므로 `DATABASE_URL` 끝에 `&connection_limit=1&pgbouncer=true`를 붙여 주세요.
+- 테스트 계정을 여러 개 만들어야 하면 `.env`에서 `DEMO_MODE=true`, `DISABLE_IP_RULE=true`로 IP 규칙을 끌 수 있습니다. 실제 배포(`NODE_ENV=production`)에서는 이 설정이 무시됩니다.
+
+### 서버에 배포하기 (Docker Compose)
+
+1. Docker가 설치된 서버를 준비하고, 도메인이 서버 IP를 가리키도록 DNS를 설정합니다.
+2. 저장소를 받은 뒤 `.env.example`을 `.env`로 복사해 값을 채웁니다. `SITE_DOMAIN`(도메인), `SITE_URL`(`https://도메인`), `POSTGRES_*`, 비밀 키, `SMTP_*`, `OPERATOR_EMAIL`이 필요합니다.
+3. 아래 명령으로 실행합니다. Caddy가 HTTPS 인증서를 자동으로 발급합니다.
+
+```bash
+docker compose up -d --build
+```
+
+4. `OPERATOR_EMAIL`로 가입하면 운영자 계정이 됩니다. `/admin`에 처음 들어가면 2단계 인증(인증 앱)을 설정합니다.
+
+**IP 규칙 주의:** 앱은 Caddy가 넣어 주는 `X-Real-IP`로 접속 IP를 판단합니다. Caddy 앞에 Cloudflare 같은 다른 프록시를 두면 모든 사용자가 그 프록시의 IP로 보여 **모두 같은 IP로 판단되고 가입이 막힙니다.** 이 경우 Caddy에 신뢰할 프록시(`trusted_proxies`)를 설정해 실제 IP를 받아야 합니다.
+
+### 테스트
+
+```bash
+npm test
+```
+
+```bash
+npm run typecheck
 ```
 
 ## 🚀 배포와 운영

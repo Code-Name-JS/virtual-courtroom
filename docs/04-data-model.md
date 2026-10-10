@@ -104,6 +104,7 @@ erDiagram
 | `user_id` | id | |
 | `purpose` | enum | `signup` 가입, `ip_change` IP 변경 |
 | `code_hash` | text | 인증 코드는 해시로만 저장 |
+| `attempts` | int | 틀린 횟수. 5번 틀리면 이 코드는 더 쓸 수 없음 (05) |
 | `pending_ip_hash` | text, 선택 | IP 변경 인증일 때 바꾸려는 IP |
 | `expires_at` · `used_at` | datetime | |
 
@@ -150,7 +151,7 @@ erDiagram
 | `id` | id | |
 | `round` | int | |
 | `stage` | enum | 02의 상태 코드 |
-| `duration` | int (시간 단위) | 게시 전에 운영자가 조정 가능 |
+| `duration_minutes` | int (분 단위) | 게시 전에 운영자가 조정 가능. 시연 모드에서 분 단위로 줄일 수 있도록 분 단위로 저장 (06) |
 | `starts_at` · `ends_at` | datetime | 단계에 들어갈 때 확정 |
 
 #### `case_event` 상태 전환 · 운영자 결정 기록
@@ -315,7 +316,7 @@ erDiagram
 
 | 테이블 | 필드 | 설명 |
 |---|---|---|
-| `sanction` | `id`, `user_id`, `round`, `level` (`warning` 경고 / `write_ban` 쓰기 제한 / `excluded` 사건에서 제외), `role` (`leaker` 유출 / `poster` 유출 정보 게시), `reason`, `report_id`·`detection_id` (근거, 선택), `issued_by`, `issued_at` | `excluded`이면 해당 `participation.status`도 `excluded`로 바뀜 |
+| `sanction` | `id`, `user_id`, `round`, `level` (`warning` 경고 / `write_ban` 쓰기 제한 / `excluded` 사건에서 제외), `violation` (`leak` 유출 / `leak_post` 유출 정보 게시 / `mass_leak` 대량 유출 / `multi_account` 다중 계정 / `abuse` 비방·혐오, 05 위반 유형), `reason`, `report_id`·`detection_id` (근거, 선택), `issued_by`, `issued_at` | `excluded`이면 해당 `participation.status`도 `excluded`로 바뀜 |
 | `sanction_appeal` | `id`, `sanction_id`, `body`, `status` (`pending` / `accepted` / `rejected`), `decided_by`, `decision_note`, `created_at`, `decided_at` | |
 
 ### 5. 판결, 리뷰, 2심
@@ -389,6 +390,19 @@ erDiagram
 
 ---
 
+## 구현에서 추가한 데이터
+
+M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데이터입니다. 모두 사이트 폐쇄 때 파기합니다.
+
+| 테이블 · 필드 | 설명 |
+|---|---|
+| `session` | 로그인 세션. 토큰 원문은 브라우저 쿠키에만 있고, DB에는 해시(`token_hash`)만 저장. `totp_verified`는 관리자 2단계 인증을 통과한 세션인지 |
+| `rate_limit_event` | 요청 횟수 제한 기록 (같은 IP 가입 시도 하루 3회, 로그인 시도, 2단계 인증 시도 등) |
+| `user.totp_secret_enc`, `user.totp_enabled_at` | 관리자 2단계 인증 비밀 값(암호화 저장)과 설정 완료 시각 |
+| `email_verification.created_at` | 인증 코드 재발송 제한(60초)에 사용 |
+
+---
+
 ## 상태별로 생기는 데이터
 
 | 사건 상태 | 새로 생기는 데이터 |
@@ -419,7 +433,7 @@ erDiagram
 | **남김** | `case`의 `title`, `summary`, `status`, `closure_summary`, `closed_at` | 종료 안내 페이지(03 X-01)에 쓰임. 개인정보가 없어야 함 |
 | **남김** | `judgment`의 판결·선고 이유·설득 지표 숫자 | 결과 요약에 쓰임 |
 | **파기** | `user`, `participation`, `indictment_vote`, `verdict_receipt` | 회원 정보와 참여 기록 |
-| **파기** | `ip_binding`, `ip_change_log`, `email_verification`, `guardian_consent`, IP 해시용 비밀 키 | IP, 인증, 법정대리인 정보 |
+| **파기** | `ip_binding`, `ip_change_log`, `email_verification`, `guardian_consent`, `session`, `rate_limit_event`, IP 해시용 비밀 키 | IP, 인증, 세션, 법정대리인 정보 |
 | **파기** | `post`, `post_revision`, `evidence`, `final_argument`, `review`, `review_comment` | 회원이 쓴 글 |
 | **파기** | `view_log`, `report`, `leak_detection`, `sanction`, `sanction_appeal` | 열람 기록과 제재 기록 |
 | **파기** | `appeal_application`, `advocate_nomination`, `advocate`, `notification` | |
