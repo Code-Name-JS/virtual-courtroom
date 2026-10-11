@@ -4,7 +4,10 @@ import { type EvidenceInput, POST_MAX_LENGTH, type Viewer, canReadBoard, canWrit
 import { isActiveMember } from "@/domain/account";
 import { randomToken } from "./crypto";
 import { db } from "./db";
+import { sanitizeImage, watermarkImage } from "./images";
+import { detectCopiedPost } from "./leak-detection";
 import { CASE_ID } from "./lifecycle";
+import { contentTypeOf, deleteUploads, readUpload, saveUpload } from "./uploads";
 
 export type Result<T = undefined> = { ok: true; value: T } | { ok: false; error: string };
 
@@ -73,7 +76,36 @@ export async function recordViews(userId: string, postIds: string[]): Promise<st
   return code;
 }
 
-type NewPost = { side: Side; body: string; evidence: EvidenceInput[]; parentPostId?: string };
+/** 이미지 증거자료는 브라우저가 보낸 파일 그대로 받습니다 */
+export type NewEvidence = Exclude<EvidenceInput, { type: "image" }> | { type: "image"; file: File; source: string };
+
+type NewPost = { side: Side; body: string; evidence: NewEvidence[]; parentPostId?: string };
+
+/**
+ * 복사 글 탐지 (M7). 글은 이미 저장되었으므로, 탐지에 실패해도 글쓰기는 실패로 돌리지 않고 기록만 남깁니다.
+ */
+async function detectCopies(postId: string) {
+  try {
+    await detectCopiedPost(db, postId);
+  } catch (error) {
+    console.error("[leak] 복사 글 탐지 실패", error);
+  }
+}
+
+/** 이미지를 검사하고 메타데이터(EXIF)를 지워 저장합니다. 하나라도 실패하면 저장한 파일을 지우고 실패로 돌려줍니다. */
+async function storeImages(items: NewEvidence[]): Promise<Result<Map<number, string>>> {
+  const keys = new Map<number, string>();
+  for (const [i, item] of items.entries()) {
+    if (item.type !== "image") continue;
+    const clean = await sanitizeImage(Buffer.from(await item.file.arrayBuffer()));
+    if (!clean.ok) {
+      await deleteUploads([...keys.values()]);
+      return clean;
+    }
+    keys.set(i, await saveUpload(clean.data, clean.format));
+  }
+  return { ok: true, value: keys };
+}
 
 export async function createPost(user: BoardUser, input: NewPost): Promise<Result<{ rootId: string }>> {
   const { viewer, round, status } = await getViewer(user);
@@ -96,23 +128,32 @@ export async function createPost(user: BoardUser, input: NewPost): Promise<Resul
   }
 
   const participation = await db.participation.findUniqueOrThrow({ where: { userId_round: { userId: user.id, round } } });
-  const post = await db.post.create({
-    data: {
-      round,
-      side: input.side,
-      authorParticipationId: participation.id,
-      rootPostId,
-      parentPostId: input.parentPostId ?? null,
-      body,
-      evidence: {
-        create: input.evidence.map((item) => ({
-          type: item.type,
-          urlOrFileKey: item.value.trim(),
-          sourceNote: item.source.trim(),
-        })),
+  const images = await storeImages(input.evidence);
+  if (!images.ok) return images;
+  let post;
+  try {
+    post = await db.post.create({
+      data: {
+        round,
+        side: input.side,
+        authorParticipationId: participation.id,
+        rootPostId,
+        parentPostId: input.parentPostId ?? null,
+        body,
+        evidence: {
+          create: input.evidence.map((item, i) => ({
+            type: item.type,
+            urlOrFileKey: item.type === "image" ? images.value.get(i)! : item.value.trim(),
+            sourceNote: item.source.trim(),
+          })),
+        },
       },
-    },
-  });
+    });
+  } catch (error) {
+    await deleteUploads([...images.value.values()]);
+    throw error;
+  }
+  await detectCopies(post.id);
   return { ok: true, value: { rootId: rootPostId ?? post.id } };
 }
 
@@ -135,6 +176,7 @@ export async function editPost(user: BoardUser, postId: string, body: string): P
     db.postRevision.create({ data: { postId, body: found.post.body } }),
     db.post.update({ where: { id: postId }, data: { body: text } }),
   ]);
+  await detectCopies(postId);
   return { ok: true, value: { rootId: found.post.rootPostId ?? found.post.id } };
 }
 
@@ -158,6 +200,23 @@ export async function reportPost(
   if (!detail.trim()) return { ok: false, error: "신고 내용을 적어 주세요." };
   await db.report.create({ data: { reporterUserId: user.id, targetPostId: postId, reason, detail: detail.trim().slice(0, 2000) } });
   return { ok: true, value: undefined };
+}
+
+/**
+ * 증거 이미지. 그 글을 읽을 수 있고, 이 코드로 그 글을 연 열람 기록이 있을 때만 돌려줍니다.
+ * 화면의 워터마크와 같은 코드를 이미지에도 새겨, 이미지만 따로 저장해 퍼뜨려도 열람자를 찾을 수 있게 합니다 (M7).
+ */
+export async function getEvidenceImage(user: BoardUser, evidenceId: string, code: string) {
+  const evidence = await db.evidence.findUnique({ where: { id: evidenceId }, include: { post: true } });
+  if (!evidence || evidence.type !== "image") return null;
+  const { viewer, status, round } = await getViewer(user);
+  if (evidence.post.isHidden && !viewer.isOperator) return null;
+  if (!canReadBoard(status, viewer, evidence.post.side, evidence.post.round < round)) return null;
+  const view = await db.viewLog.findFirst({ where: { userId: user.id, postId: evidence.postId, watermarkCode: code.trim().toUpperCase() } });
+  if (!view) return null;
+  const data = await readUpload(evidence.urlOrFileKey);
+  if (!data) return null;
+  return { data: await watermarkImage(data, view.watermarkCode), contentType: contentTypeOf(evidence.urlOrFileKey) };
 }
 
 export async function countPosts(round: number, side: Side): Promise<number> {

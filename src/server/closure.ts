@@ -3,6 +3,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { caseHasEnded, canExecuteClosure, checkClosureSchedule } from "@/domain/closure";
 import { CASE_ID, StatusConflictError, transition } from "./lifecycle";
+import { deleteAllUploads } from "./uploads";
 
 export type Result = { ok: true } | { ok: false; error: string };
 
@@ -42,6 +43,7 @@ export type PurgeReport = Record<string, number>;
 
 /**
  * 개인정보 파기. 종료 안내 페이지에 쓰는 사건명, 개요, 결과 요약, 판결 숫자만 남기고 나머지는 모두 지웁니다 (04).
+ * 업로드한 증거 이미지 파일도 지웁니다.
  * 여러 번 실행해도 안전합니다.
  */
 export async function purgePersonalData(db: PrismaClient): Promise<PurgeReport> {
@@ -65,7 +67,9 @@ export async function purgePersonalData(db: PrismaClient): Promise<PurgeReport> 
     await tx.judgment.updateMany({ data: { pronouncedBy: "파기됨" } });
     await tx.case.updateMany({ data: { body: "", aiOriginalBody: "", reviewNote: null, reviewChecklist: Prisma.DbNull } });
   });
-  return before;
+  // 증거자료 이미지 파일 (글과 함께 파기)
+  const images = await deleteAllUploads();
+  return { ...before, 이미지: images };
 }
 
 /**

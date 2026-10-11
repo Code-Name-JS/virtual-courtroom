@@ -4,15 +4,31 @@ import type { SanctionLevel, Violation } from "@prisma/client";
 import { startTransition, useActionState, useState } from "react";
 import { FormMessage, type FormState, SubmitButton } from "@/components/form";
 import { SANCTION_LABELS, VIOLATION_LABELS, suggestSanction } from "@/domain/board";
-import { decideAppealAction, sanctionAction } from "./actions";
+import { decideAppealAction, dismissDetectionAction, sanctionAction } from "./actions";
 
 const inputClass = "w-full rounded border border-slate-300 px-3 py-2 text-sm";
 
 // 03 O-05 제재 부과. 05 기준의 추천 단계를 먼저 골라 두고, 운영자가 확인해 확정합니다.
-export function SanctionForm({ userId, reportId, postId, priorSanctions }: { userId: string; reportId?: string; postId?: string; priorSanctions: number }) {
+export function SanctionForm({
+  userId,
+  reportId,
+  detectionId,
+  postId,
+  priorSanctions,
+  defaultViolation = "leak",
+  defaultClearEvidence = false,
+}: {
+  userId: string;
+  reportId?: string;
+  detectionId?: string;
+  postId?: string;
+  priorSanctions: number;
+  defaultViolation?: Violation;
+  defaultClearEvidence?: boolean;
+}) {
   const [state, action] = useActionState(sanctionAction, {} as FormState);
-  const [violation, setViolation] = useState<Violation>("leak");
-  const [clear, setClear] = useState(false);
+  const [violation, setViolation] = useState<Violation>(defaultViolation);
+  const [clear, setClear] = useState(defaultClearEvidence);
   const suggested = suggestSanction(violation, priorSanctions, clear);
   const [level, setLevel] = useState<SanctionLevel | null>(null);
   const chosen = level ?? suggested;
@@ -29,6 +45,7 @@ export function SanctionForm({ userId, reportId, postId, priorSanctions }: { use
     >
       <input type="hidden" name="userId" value={userId} />
       {reportId && <input type="hidden" name="reportId" value={reportId} />}
+      {detectionId && <input type="hidden" name="detectionId" value={detectionId} />}
       {postId && <input type="hidden" name="postId" value={postId} />}
       <label className="block space-y-1">
         <span className="text-sm font-medium">위반 유형</span>
@@ -57,7 +74,7 @@ export function SanctionForm({ userId, reportId, postId, priorSanctions }: { use
       </label>
       {postId && (
         <label className="flex items-center gap-2 text-sm">
-          <input type="checkbox" name="hidePost" defaultChecked /> 신고된 글 숨기기
+          <input type="checkbox" name="hidePost" defaultChecked /> {reportId ? "신고된" : "탐지된"} 글 숨기기
         </label>
       )}
       <label className="block space-y-1">
@@ -82,6 +99,19 @@ export function AppealDecisionForm({ appealId }: { appealId: string }) {
       </div>
       <FormMessage state={state} />
       <SubmitButton variant="secondary">결정</SubmitButton>
+    </form>
+  );
+}
+
+// M7 자동 탐지 결과 기각
+export function DismissDetectionForm({ detectionId }: { detectionId: string }) {
+  const [state, action] = useActionState(dismissDetectionAction, {} as FormState);
+  return (
+    <form action={action} className="space-y-2">
+      <input type="hidden" name="detectionId" value={detectionId} />
+      <input name="note" required placeholder="제재하지 않는 이유 (기록으로 남습니다)" className={inputClass} />
+      <FormMessage state={state} />
+      <SubmitButton variant="secondary">제재하지 않음</SubmitButton>
     </form>
   );
 }

@@ -1,6 +1,7 @@
 import { PrismaClient } from "@prisma/client";
 import { afterAll, describe, expect, it } from "vitest";
 import { announceClosure, executeClosure, isSiteClosed, purgePersonalData } from "@/server/closure";
+import { readUpload, saveUpload } from "@/server/uploads";
 
 // 실제 DB가 필요한 통합 테스트입니다. TEST_DATABASE_URL을 지정했을 때만 실행됩니다. 이 DB의 데이터를 모두 지웁니다.
 const url = process.env.TEST_DATABASE_URL;
@@ -34,12 +35,15 @@ describe.skipIf(!url)("사이트 폐쇄와 개인정보 파기 (DB 통합 테스
     const p = await db.participation.create({ data: { userId: juror.id, round: 1, side: "indict", joinedVia: "indictment_vote", status: "signed" } });
     const post = await db.post.create({ data: { round: 1, side: "indict", authorParticipationId: p.id, body: "게시글" } });
     await db.viewLog.create({ data: { userId: juror.id, postId: post.id, watermarkCode: "ABCD1234" } });
+    const imageKey = await saveUpload(Buffer.from("image"), "png");
+    await db.evidence.create({ data: { postId: post.id, type: "image", urlOrFileKey: imageKey, sourceNote: "" } });
+    await db.leakDetection.create({ data: { type: "abnormal_view", suspectUserId: juror.id, score: 70, detail: { pageViews: 70 } } });
     await db.verdictBallot.create({ data: { round: 1, choice: "guilty" } });
     await db.rateLimitEvent.create({ data: { key: "signup:h" } });
     await db.judgment.create({
       data: { round: 1, outcome: "guilty", sentenceType: "fine", sentenceDetail: "300만 원", reasoning: "이유", baselineIndictRatio: 100, verdictGuilty: 1, verdictNotGuilty: 0, pronouncedBy: operator.id },
     });
-    return { operatorId: operator.id };
+    return { operatorId: operator.id, imageKey };
   }
 
   it("폐쇄를 공지하면 공지와 모든 회원에게 이메일 알림이 예약된다", async () => {
@@ -53,9 +57,10 @@ describe.skipIf(!url)("사이트 폐쇄와 개인정보 파기 (DB 통합 테스
   });
 
   it("공지한 일시 전에는 실행할 수 없고, 실행하면 폐쇄되며 개인정보가 남지 않는다", async () => {
-    const { operatorId } = await setupFinalizedCase();
+    const { operatorId, imageKey } = await setupFinalizedCase();
     await announceClosure(db, operatorId, { scheduledAt: new Date(Date.now() + 2 * 60_000), summary: "결과 요약" }, { demoMode: true });
     expect((await executeClosure(db, operatorId)).ok).toBe(false);
+    expect(await readUpload(imageKey)).not.toBeNull();
 
     const result = await executeClosure(db, operatorId, new Date(Date.now() + 3 * 60_000));
     expect(result.ok).toBe(true);
@@ -75,8 +80,12 @@ describe.skipIf(!url)("사이트 폐쇄와 개인정보 파기 (DB 통합 테스
       db.caseEvent.count(),
       db.notice.count(),
       db.rateLimitEvent.count(),
+      db.evidence.count(),
+      db.leakDetection.count(),
     ]);
     expect(counts.every((c) => c === 0)).toBe(true);
+    // 증거 이미지 파일도 파기
+    expect(await readUpload(imageKey)).toBeNull();
 
     // 종료 안내 페이지에 쓰는 데이터만 남음
     const c = await db.case.findUniqueOrThrow({ where: { id: 1 } });

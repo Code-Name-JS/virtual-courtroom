@@ -97,7 +97,7 @@ export default async function BoardPage({ params, searchParams }: { params: Prom
           <p className="rounded-lg border border-dashed border-slate-300 bg-white p-6 text-center text-slate-500">아직 올라온 스레드가 없습니다.</p>
         ) : (
           threads.map((thread) => (
-            <PostView key={thread.id} post={thread}>
+            <PostView key={thread.id} post={thread} watermarkCode={code}>
               <Link href={`/case/threads/${thread.id}`} className="text-sm font-semibold text-navy-800 underline">
                 스레드 보기 · 이어진 글 {thread._count.threadAll}개
               </Link>

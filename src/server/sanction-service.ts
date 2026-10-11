@@ -40,6 +40,8 @@ type IssueInput = {
   level: SanctionLevel;
   reason: string;
   reportId?: string;
+  /** 근거가 된 자동 탐지 결과 (M7) */
+  detectionId?: string;
   hidePostId?: string;
 };
 
@@ -63,6 +65,7 @@ export async function issueSanction(operatorId: string, input: IssueInput): Prom
         violation: input.violation,
         reason: input.reason.trim(),
         reportId: input.reportId,
+        detectionId: input.detectionId,
         issuedBy: operatorId,
       },
     });
@@ -79,6 +82,14 @@ export async function issueSanction(operatorId: string, input: IssueInput): Prom
       await tx.report.update({
         where: { id: input.reportId },
         data: { status: "resolved", handledBy: operatorId, handledAt: new Date(), resolutionNote: `${SANCTION_LABELS[input.level]} 제재` },
+      });
+    }
+    // 운영자가 탐지 결과를 확인해 제재했으므로 '확인됨'으로 처리. 복사 글처럼 여러 사람(올린 사람, 전달한 사람)을
+    // 제재할 수 있는 탐지는 이미 처리되었어도 근거로 다시 쓸 수 있음
+    if (input.detectionId) {
+      await tx.leakDetection.updateMany({
+        where: { id: input.detectionId, status: "open" },
+        data: { status: "confirmed", handledBy: operatorId, handledAt: new Date(), resolutionNote: `${target.nickname}님 ${SANCTION_LABELS[input.level]} 제재` },
       });
     }
     await tx.notification.create({

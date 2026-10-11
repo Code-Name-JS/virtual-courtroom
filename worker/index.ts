@@ -1,8 +1,9 @@
 // 06 단계 자동 전환 워커: 1분마다 마감이 지난 단계를 다음 단계로 넘기고, 알림 이메일을 보냅니다.
-// 법정대리인 동의 기한이 지난 가입 신청도 정리합니다.
+// 법정대리인 동의 기한이 지난 가입 신청도 정리하고, 비정상 열람을 찾아 운영자 화면에 올립니다.
 import { PrismaClient } from "@prisma/client";
 import { createRecommenderFromEnv } from "../src/server/ai/recommender";
 import { expireGuardianConsents } from "../src/server/guardian";
+import { detectAbnormalViews } from "../src/server/leak-detection";
 import { advanceDueStages } from "../src/server/lifecycle";
 import { dispatchEmails } from "../src/server/outbox";
 
@@ -18,6 +19,9 @@ async function tick() {
     // 7일 안에 법정대리인이 동의하지 않은 가입 신청은 취소하고 정보를 삭제 (05)
     const expired = await expireGuardianConsents(db);
     if (expired > 0) console.info(`[worker] 법정대리인 동의 기한이 지난 가입 신청 ${expired}건을 삭제했습니다.`);
+    // 짧은 시간의 대량 열람, 자동화 도구로 보이는 열람 (05 자동 탐지 기준). 제재는 운영자가 확인한 뒤에만
+    const detected = await detectAbnormalViews(db);
+    if (detected > 0) console.info(`[worker] 비정상 열람 ${detected}건을 탐지했습니다. 운영자 화면에서 확인해 주세요.`);
     const sent = await dispatchEmails(db);
     if (sent > 0) console.info(`[worker] 알림 이메일 ${sent}통을 보냈습니다.`);
   } catch (error) {

@@ -38,11 +38,15 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       CLIENT_IP_HEADER: x-real-ip
+      UPLOAD_DIR: /app/uploads
+    # 증거 이미지 (사이트 폐쇄 때 파기)
+    volumes:
+      - uploads:/app/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
 
-  # 1분마다 마감이 지난 단계를 다음 단계로 넘깁니다 (06 단계 자동 전환)
+  # 1분마다 마감이 지난 단계를 다음 단계로 넘기고, 비정상 열람을 찾습니다 (06 단계 자동 전환, M7)
   worker:
     build:
       context: .
@@ -53,6 +57,10 @@ services:
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       NODE_ENV: production
+      UPLOAD_DIR: /app/uploads
+    # 파기 스크립트(npm run purge)가 증거 이미지도 지울 수 있도록 앱과 같은 볼륨을 씀
+    volumes:
+      - uploads:/app/uploads
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -75,5 +83,6 @@ services:
 
 volumes:
   db-data:
+  uploads:
   caddy-data:
   caddy-config:

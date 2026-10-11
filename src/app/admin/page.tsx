@@ -5,6 +5,7 @@ import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
 import { listPendingAppeals, listReports } from "@/server/sanction-service";
 import { db } from "@/server/db";
+import { countOpenDetections } from "@/server/leak-detection";
 import { advanceDueStages } from "@/server/lifecycle";
 
 export const metadata = { title: "관리자 · Virtual Courtroom" };
@@ -22,12 +23,13 @@ export default async function AdminPage() {
   await requireOperator();
   // 워커가 없어도 마감이 지난 단계가 넘어가도록 (사건 페이지와 같은 방식)
   await advanceDueStages(db);
-  const [members, verified, current, reports, appeals] = await Promise.all([
+  const [members, verified, current, reports, appeals, detections] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { emailVerifiedAt: { not: null } } }),
     getCase(),
     listReports(),
     listPendingAppeals(),
+    countOpenDetections(db),
   ]);
   const ended = current?.status === "DISMISSED" || current?.status === "FINALIZED";
   const todo =
@@ -63,7 +65,10 @@ export default async function AdminPage() {
             {!current || current.status === "DRAFT" ? "사건 만들기" : "사건 관리"}
           </Link>
           <Link href="/admin/reports" className="inline-block rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
-            신고 · 제재 (처리할 신고 {reports.length}건, 이의 신청 {appeals.length}건)
+            신고 · 제재 (처리할 신고 {reports.length}건, 자동 탐지 {detections}건, 이의 신청 {appeals.length}건)
+          </Link>
+          <Link href="/admin/members" className="inline-block rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
+            회원 관리
           </Link>
         </div>
       </section>

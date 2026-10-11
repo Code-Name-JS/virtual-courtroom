@@ -209,6 +209,8 @@ model User {
   viewLogs            ViewLog[]
   reports             Report[]            @relation("Reporter")
   handledReports      Report[]            @relation("ReportHandler")
+  suspectedIn         LeakDetection[]     @relation("DetectionSuspect")
+  handledDetections   LeakDetection[]     @relation("DetectionHandler")
   sanctions           Sanction[]          @relation("SanctionTarget")
   issuedSanctions     Sanction[]          @relation("SanctionIssuer")
   reviewComments      ReviewComment[]
@@ -535,6 +537,7 @@ model Evidence {
   id           String       @id @default(uuid())
   postId       String       @map("post_id")
   type         EvidenceType
+  // 링크는 주소, 인용문은 인용한 문장, 이미지는 업로드 저장소의 파일 이름 (M7)
   urlOrFileKey String       @map("url_or_file_key")
   sourceNote   String       @map("source_note")
   createdAt    DateTime     @default(now()) @map("created_at")
@@ -572,6 +575,8 @@ model ViewLog {
 
   @@index([watermarkCode])
   @@index([userId, viewedAt])
+  // 복사 글 탐지에서 원본 글을 열람한 사람을 찾을 때 (M7)
+  @@index([postId, viewedAt])
   @@map("view_log")
 }
 
@@ -595,20 +600,34 @@ model Report {
   @@map("report")
 }
 
+// 자동 탐지 결과 (M7). 탐지만으로는 제재하지 않고, 운영자가 근거를 확인한 뒤 제재하거나 기각합니다 (05)
 model LeakDetection {
-  id            String          @id @default(uuid())
-  type          DetectionType
-  targetPostId  String?         @map("target_post_id")
-  sourcePostId  String?         @map("source_post_id")
-  suspectUserId String?         @map("suspect_user_id")
-  score         Int
-  status        DetectionStatus @default(open)
-  detectedAt    DateTime        @default(now()) @map("detected_at")
+  id             String          @id @default(uuid())
+  type           DetectionType
+  round          Int             @default(1)
+  targetPostId   String?         @map("target_post_id")
+  sourcePostId   String?         @map("source_post_id")
+  suspectUserId  String?         @map("suspect_user_id")
+  // 복사 글: 겹치는 비율(%), 비정상 열람: 탐지 구간의 화면 열람 수, 워터마크 일치: 그 코드로 열람한 글 수
+  score          Int
+  // 운영자 화면에 보여 줄 근거 (열람 구간·간격, 워터마크 코드 등)
+  detail         Json?
+  status         DetectionStatus @default(open)
+  detectedAt     DateTime        @default(now()) @map("detected_at")
+  handledBy      String?         @map("handled_by")
+  handledAt      DateTime?       @map("handled_at")
+  resolutionNote String?         @map("resolution_note")
 
   targetPost Post?      @relation("DetectionTarget", fields: [targetPostId], references: [id], onDelete: SetNull)
   sourcePost Post?      @relation("DetectionSource", fields: [sourcePostId], references: [id], onDelete: SetNull)
+  suspect    User?      @relation("DetectionSuspect", fields: [suspectUserId], references: [id], onDelete: SetNull)
+  handler    User?      @relation("DetectionHandler", fields: [handledBy], references: [id], onDelete: SetNull)
   sanctions  Sanction[]
 
+  // 같은 두 글의 복사 글 탐지는 한 건만 (글을 고치면 점수만 갱신)
+  @@unique([type, targetPostId, sourcePostId])
+  @@index([status, detectedAt])
+  @@index([suspectUserId, type])
   @@map("leak_detection")
 }
 

@@ -38,7 +38,7 @@ export default async function ThreadPage({ params }: { params: Promise<{ id: str
         {posts.map((post) => {
           const mine = post.author.user.nickname === user.nickname;
           return (
-            <PostView key={post.id} post={post}>
+            <PostView key={post.id} post={post} watermarkCode={code}>
               {mine && write.ok && !post.isHidden && (
                 <>
                   <EditPostForm postId={post.id} body={post.body} />

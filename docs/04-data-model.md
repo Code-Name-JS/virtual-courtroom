@@ -274,7 +274,7 @@ erDiagram
 | `id` | id | |
 | `post_id` | id | |
 | `type` | enum | `link` 링크, `image` 이미지, `text` 인용문 |
-| `url_or_file_key` | text | |
+| `url_or_file_key` | text | 링크는 주소, 인용문은 인용한 문장, 이미지는 서버 저장 폴더의 파일 이름(무작위 이름). 이미지 파일은 DB 밖에 있으므로 폐쇄 때 폴더째 파기 (M7) |
 | `source_note` | text | 출처 |
 | `created_at` | datetime | |
 
@@ -300,7 +300,7 @@ erDiagram
 | `watermark_code` | text | 이 열람에 표시한 워터마크 코드. 계정과 연결되어 있어, 캡처가 퍼졌을 때 열람자를 찾는 데 씀. IP는 쓰지 않음 |
 | `viewed_at` | datetime | |
 
-비정상 열람 탐지는 계정별 열람 횟수와 간격으로 판단합니다.
+비정상 열람 탐지는 계정별 열람 횟수와 간격으로 판단합니다. 화면을 열 때마다 코드를 새로 만들므로 코드 하나가 화면 열람 한 번입니다 (05 [자동 탐지 기준](./05-policy-and-risk.md#자동-탐지-기준-m7)). 증거 이미지에도 그 화면의 코드를 새겨 보냅니다.
 
 #### `report` 신고
 
@@ -315,18 +315,23 @@ erDiagram
 | `handled_by` · `handled_at` · `resolution_note` | | 운영자 처리 기록 |
 | `created_at` | datetime | |
 
-#### `leak_detection` 자동 탐지 결과 (2차)
+#### `leak_detection` 자동 탐지 결과 (2차, M7)
 
 | 필드 | 타입 | 설명 |
 |---|---|---|
 | `id` | id | |
 | `type` | enum | `copy_similarity` 복사 글, `abnormal_view` 비정상 열람, `watermark_match` 워터마크 일치 |
+| `round` | int | 어느 심급에서 탐지했는지 (M7) |
 | `target_post_id` | id, 선택 | 상대 측 게시판에 올라온 의심 글 |
 | `source_post_id` | id, 선택 | 원본 글 |
-| `suspect_user_id` | id, 선택 | |
-| `score` | int | 유사도 등 |
-| `status` | enum | `open`, `confirmed`, `dismissed` |
+| `suspect_user_id` | id, 선택 | 복사 글은 의심 글을 올린 사람, 비정상 열람·워터마크 일치는 열람자 |
+| `score` | int | 복사 글은 겹친 비율(%), 비정상 열람은 화면 열람 수, 워터마크 일치는 그 코드로 열람한 글 수 |
+| `detail` | json, 선택 | 운영자 화면에 보여 줄 근거. 겹친 분량, 열람 구간·간격·이유, 워터마크 코드 등 (M7) |
+| `status` | enum | `open`, `confirmed`(제재함), `dismissed`(제재하지 않음) |
 | `detected_at` | datetime | |
+| `handled_by` · `handled_at` · `resolution_note` | | 운영자 처리 기록. 기각할 때는 이유가 필수 (M7) |
+
+같은 두 글의 복사 글 탐지는 한 건만 남기고(`type`, `target_post_id`, `source_post_id` 유일), 글을 고치면 처리 전인 탐지의 점수만 갱신합니다.
 
 #### `sanction` 제재 / `sanction_appeal` 제재 이의 신청
 
@@ -460,7 +465,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | **남김** | `judgment`의 판결·선고 이유·설득 지표 숫자 | 결과 요약에 쓰임 |
 | **파기** | `user`, `participation`, `indictment_vote`, `verdict_receipt` | 회원 정보와 참여 기록 |
 | **파기** | `ip_binding`, `ip_change_log`, `email_verification`, `guardian_consent`, `session`, `rate_limit_event`, IP 해시용 비밀 키 | IP, 인증, 세션, 법정대리인 정보 |
-| **파기** | `post`, `post_revision`, `evidence`, `final_argument`, `review`, `review_comment` | 회원이 쓴 글 |
+| **파기** | `post`, `post_revision`, `evidence`, `final_argument`, `review`, `review_comment`, 증거 이미지 파일 | 회원이 쓴 글과 올린 이미지 |
 | **파기** | `view_log`, `report`, `leak_detection`, `sanction`, `sanction_appeal` | 열람 기록과 제재 기록 |
 | **파기** | `appeal_application`, `advocate_nomination`, `advocate`, `notification` | |
 | **파기** | `verdict_ballot`, `stage_schedule`, `case_event`, `notice` | 개인정보는 없지만 종료 안내 페이지에 필요 없음 |
@@ -484,7 +489,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | # | 질문 | 제안 |
 |---|---|---|
 | 3 | ~~리뷰에 별점을 둘까? (시안: 4.6 / 5)~~ | **결정됨 (M5)**: 선택 항목(1~5점)으로 두고, 리뷰 화면에 평균을 보여 줌 |
-| 4 | 증거자료로 파일 업로드를 허용할까? | 링크, 이미지, 인용문만 허용. 이미지는 5MB 이하 4장까지 ([05. 게시판 · 증거자료 정책](./05-policy-and-risk.md#게시판--증거자료-정책)의 제안값) |
+| 4 | ~~증거자료로 파일 업로드를 허용할까?~~ | **결정됨 (M7)**: 링크, 이미지, 인용문만 허용. 이미지는 jpg·png·webp, 5MB 이하 4장까지, EXIF를 지워 서버 디스크에 저장 ([05. 게시판 · 증거자료 정책](./05-policy-and-risk.md#게시판--증거자료-정책)) |
 | 5 | 스레드 글을 고치거나 지울 수 있나? | 증거 제출 기간 안에서 수정 가능, 수정 이력은 보관. 삭제하면 배심원에게는 보이지 않게 숨기되 실제로 지우지 않고, 운영자는 계속 볼 수 있음 (유출 흔적을 지우는 것을 막기 위해) |
 | 7 | ~~IP 변경 인증을 하루에 몇 번까지 허용할까?~~ | **결정됨**: 계정당 하루 5회 ([05. IP · 계정 정책](./05-policy-and-risk.md#ip--계정-정책)) |
-| 8 | 계정이 IP를 바꾸고 나면 이전 IP는 바로 다른 계정이 쓸 수 있나? | 바로 풀어 줌. 다만 같은 IP가 계정 사이를 오가면 `ip_change_log`로 운영자에게 표시 |
+| 8 | 계정이 IP를 바꾸고 나면 이전 IP는 바로 다른 계정이 쓸 수 있나? | 바로 풀어 줌. 다만 같은 IP가 계정 사이를 오가면 `ip_change_log`로 운영자에게 표시 (M7에서 03 O-07 다중 계정 의심 표시로 구현) |

@@ -3,23 +3,29 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { FormState } from "@/components/form";
-import { EVIDENCE_PER_POST, type EvidenceInput } from "@/domain/board";
+import { EVIDENCE_PER_POST } from "@/domain/board";
 import { requireUser } from "@/server/auth";
-import { createPost, deletePost, editPost, reportPost } from "@/server/board-service";
+import { type NewEvidence, createPost, deletePost, editPost, reportPost } from "@/server/board-service";
 
 function parseSide(value: FormDataEntryValue | null) {
   return value === "indict" || value === "dismiss" ? value : null;
 }
 
-function parseEvidence(formData: FormData): EvidenceInput[] {
-  const items: EvidenceInput[] = [];
+function parseEvidence(formData: FormData): NewEvidence[] {
+  const items: NewEvidence[] = [];
   for (let i = 0; i < EVIDENCE_PER_POST; i++) {
+    const source = String(formData.get(`evidence_source_${i}`) ?? "");
+    if (formData.get(`evidence_type_${i}`) === "image") {
+      const file = formData.get(`evidence_file_${i}`);
+      if (file instanceof File && file.size > 0) items.push({ type: "image", file, source });
+      continue;
+    }
     const value = String(formData.get(`evidence_value_${i}`) ?? "").trim();
     if (!value) continue;
     items.push({
       type: formData.get(`evidence_type_${i}`) === "text" ? "text" : "link",
       value,
-      source: String(formData.get(`evidence_source_${i}`) ?? ""),
+      source,
     });
   }
   return items;

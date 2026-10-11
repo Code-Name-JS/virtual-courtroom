@@ -69,15 +69,23 @@ export function canWriteBoard(status: CaseStatus, viewer: Viewer, boardSide: Sid
 // 05 게시판 · 증거자료 정책
 export const POST_MAX_LENGTH = 5000;
 export const EVIDENCE_PER_POST = 4;
+/** 이미지는 jpg, png, webp. 1장당 5MB 이하. 글 하나에 붙이는 증거자료 4개 안에 포함 (M7) */
+export const IMAGE_MAX_BYTES = 5 * 1024 * 1024;
+export const IMAGE_ACCEPT = "image/jpeg,image/png,image/webp";
 
-export type EvidenceInput = { type: "link" | "text"; value: string; source: string };
+export type EvidenceInput =
+  | { type: "link" | "text"; value: string; source: string }
+  | { type: "image"; file: { size: number }; source: string };
 
 export type EvidenceCheck = { ok: true } | { ok: false; error: string };
 
 export function checkEvidence(items: EvidenceInput[]): EvidenceCheck {
   if (items.length > EVIDENCE_PER_POST) return { ok: false, error: `증거자료는 글 하나에 ${EVIDENCE_PER_POST}개까지 붙일 수 있습니다.` };
   for (const item of items) {
-    if (item.type === "link") {
+    if (item.type === "image") {
+      if (item.file.size === 0) return { ok: false, error: "이미지 파일을 골라 주세요." };
+      if (item.file.size > IMAGE_MAX_BYTES) return { ok: false, error: "이미지는 1장당 5MB 이하만 올릴 수 있습니다." };
+    } else if (item.type === "link") {
       let url: URL;
       try {
         url = new URL(item.value);

@@ -1,42 +1,69 @@
 "use client";
 
-import { startTransition, useActionState, useRef } from "react";
+import { startTransition, useActionState, useRef, useState } from "react";
 import { FormMessage, type FormState, SubmitButton } from "@/components/form";
-import { EVIDENCE_PER_POST, POST_MAX_LENGTH } from "@/domain/board";
+import { EVIDENCE_PER_POST, IMAGE_ACCEPT, IMAGE_MAX_BYTES, POST_MAX_LENGTH } from "@/domain/board";
 import { createThreadAction, editPostAction, replyAction, reportAction } from "./actions";
 
 const inputClass = "w-full rounded border border-slate-300 px-3 py-2 text-sm outline-none focus:border-navy-800 focus:ring-2 focus:ring-gold-400/40";
+
+function EvidenceRow({ index }: { index: number }) {
+  const [type, setType] = useState("link");
+  return (
+    <div className="grid gap-2 sm:grid-cols-[7rem_1fr_12rem]">
+      <select name={`evidence_type_${index}`} className={inputClass} value={type} onChange={(e) => setType(e.target.value)}>
+        <option value="link">링크</option>
+        <option value="text">인용문</option>
+        <option value="image">이미지</option>
+      </select>
+      {type === "image" ? (
+        <input type="file" name={`evidence_file_${index}`} accept={IMAGE_ACCEPT} className="w-full text-sm file:mr-2 file:rounded file:border-0 file:bg-slate-200 file:px-3 file:py-2" />
+      ) : (
+        <input name={`evidence_value_${index}`} placeholder={type === "link" ? "https://…" : "인용할 문장"} className={inputClass} />
+      )}
+      <input name={`evidence_source_${index}`} placeholder={type === "text" ? "출처 (필수)" : "출처"} className={inputClass} />
+    </div>
+  );
+}
 
 function EvidenceFields() {
   return (
     <details className="rounded border border-slate-200 bg-slate-50 p-3 text-sm">
       <summary className="cursor-pointer font-medium">증거자료 붙이기 (최대 {EVIDENCE_PER_POST}개)</summary>
-      <p className="mt-2 text-xs text-slate-500">링크는 https 주소만, 인용문은 출처를 꼭 적어 주세요. 기사·논문 등은 필요한 만큼만 인용합니다.</p>
+      <p className="mt-2 text-xs text-slate-500">
+        링크는 https 주소만, 인용문은 출처를 꼭 적어 주세요. 이미지는 jpg·png·webp, 1장당 5MB 이하이며 올릴 때 촬영 위치 등 사진 속 정보(EXIF)를 지웁니다.
+        기사·논문·사진 등 다른 사람의 저작물은 출처를 밝히고 필요한 만큼만 인용합니다.
+      </p>
       <div className="mt-3 space-y-3">
         {Array.from({ length: EVIDENCE_PER_POST }, (_, i) => (
-          <div key={i} className="grid gap-2 sm:grid-cols-[7rem_1fr_12rem]">
-            <select name={`evidence_type_${i}`} className={inputClass} defaultValue="link">
-              <option value="link">링크</option>
-              <option value="text">인용문</option>
-            </select>
-            <input name={`evidence_value_${i}`} placeholder="https://… 또는 인용할 문장" className={inputClass} />
-            <input name={`evidence_source_${i}`} placeholder="출처 (인용문은 필수)" className={inputClass} />
-          </div>
+          <EvidenceRow key={i} index={i} />
         ))}
       </div>
     </details>
   );
 }
 
+/** 큰 이미지를 서버로 보내기 전에 막아, 기다린 뒤에 실패하지 않게 함. 최종 확인은 서버에서 다시 함 */
+function oversizedImage(formData: FormData): FormState | null {
+  for (const value of formData.values()) {
+    if (value instanceof File && value.size > IMAGE_MAX_BYTES) return { error: `「${value.name}」은(는) 5MB를 넘어 올릴 수 없습니다.` };
+  }
+  return null;
+}
+
 /** 긴 글이 제출 후 초기화되지 않도록 직접 제출하는 폼 (사건 입력 폼과 같은 방식) */
 function useKeepValuesForm(serverAction: (prev: FormState, formData: FormData) => Promise<FormState>) {
   const [state, action, pending] = useActionState(serverAction, {} as FormState);
+  const [localError, setLocalError] = useState<FormState | null>(null);
   const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const formData = new FormData(event.currentTarget);
+    const oversized = oversizedImage(formData);
+    setLocalError(oversized);
+    if (oversized) return;
     startTransition(() => action(formData));
   };
-  return { state, onSubmit, pending };
+  return { state: localError ?? state, onSubmit, pending };
 }
 
 // 03 C-06 스레드 작성
@@ -58,13 +85,13 @@ export function NewThreadForm({ side }: { side: "indict" | "dismiss" }) {
 
 export function ReplyForm({ side, parentPostId }: { side: "indict" | "dismiss"; parentPostId: string }) {
   const formRef = useRef<HTMLFormElement>(null);
-  const [state, action] = useActionState(async (prev: FormState, formData: FormData) => {
+  const { state, onSubmit } = useKeepValuesForm(async (prev: FormState, formData: FormData) => {
     const result = await replyAction(prev, formData);
     if (result.message) formRef.current?.reset();
     return result;
-  }, {} as FormState);
+  });
   return (
-    <form ref={formRef} onSubmit={(e) => { e.preventDefault(); const fd = new FormData(e.currentTarget); startTransition(() => action(fd)); }} className="space-y-3 rounded-lg border border-slate-200 bg-white p-5">
+    <form ref={formRef} onSubmit={onSubmit} className="space-y-3 rounded-lg border border-slate-200 bg-white p-5">
       <input type="hidden" name="side" value={side} />
       <input type="hidden" name="parentPostId" value={parentPostId} />
       <label className="block space-y-1">

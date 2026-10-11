@@ -144,3 +144,6 @@ vite.config.ts.timestamp-*
 
 # Next.js 자동 생성 파일
 next-env.d.ts
+
+# 증거 이미지 저장 폴더 (개발용)
+uploads/

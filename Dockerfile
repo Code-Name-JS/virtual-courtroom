@@ -23,9 +23,12 @@ FROM base AS runner
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
+ENV UPLOAD_DIR=/app/uploads
 RUN addgroup -S app && adduser -S app -G app
 COPY --from=build --chown=app:app /app/.next/standalone ./
 COPY --from=build --chown=app:app /app/.next/static ./.next/static
+# 증거 이미지 저장 폴더 (docker-compose.yml의 uploads 볼륨)
+RUN mkdir -p /app/uploads && chown app:app /app/uploads
 USER app
 EXPOSE 3000
 CMD ["node", "server.js"]
