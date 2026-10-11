@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { BADGES } from "@/domain/badge";
 import { STATUS_LABELS, todoFor } from "@/domain/case";
 import { requireUser } from "@/server/auth";
+import { getEarnedBadges } from "@/server/badges";
 import { getCaseView } from "@/server/case-service";
 import { db } from "@/server/db";
 import { getAppealView, myReviewState } from "@/server/appeal";
@@ -9,14 +11,15 @@ export const metadata = { title: "내 활동 · Virtual Courtroom" };
 
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Seoul" });
 
-// 03 U-03 내 활동, U-04 알림
+// 03 U-03 내 활동, U-04 알림, U-06 배지
 export default async function MePage() {
   const { user } = await requireUser();
-  const [view, notifications, review, appeal] = await Promise.all([
+  const [view, notifications, review, appeal, badges] = await Promise.all([
     getCaseView(user.id),
     db.notification.findMany({ where: { userId: user.id }, orderBy: { createdAt: "desc" }, take: 10 }),
     myReviewState(db, user),
     getAppealView(db, user),
+    getEarnedBadges(user.id),
   ]);
 
   return (
@@ -54,6 +57,30 @@ export default async function MePage() {
         )}
       </section>
 
+      {user.role !== "operator" && (
+        <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
+          <h2 className="font-semibold">
+            획득한 배지 <span className="text-sm font-normal text-slate-500">({badges.size} / {BADGES.length})</span>
+          </h2>
+          <p className="text-xs text-slate-500">재판의 각 단계를 직접 해 보면 받는 배지입니다. 나만 볼 수 있고, 사이트를 폐쇄하면 참여 기록과 함께 사라집니다.</p>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {BADGES.map((badge) => {
+              const earned = badges.has(badge.id);
+              return (
+                <li key={badge.id} className={`rounded border p-3 ${earned ? "border-gold-500 bg-gold-400/10" : "border-dashed border-slate-300 text-slate-400"}`}>
+                  <p className="flex items-center gap-2 text-sm font-semibold">
+                    <span aria-hidden>{earned ? "🏅" : "○"}</span>
+                    {badge.name}
+                    <span className="text-xs font-normal">· {badge.stage}</span>
+                  </p>
+                  <p className={`mt-1 text-xs ${earned ? "text-slate-700" : ""}`}>{earned ? badge.description : badge.how}</p>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       <section className="space-y-3 rounded-lg border border-slate-200 bg-white p-6">
         <h2 className="font-semibold">알림</h2>
         {notifications.length === 0 ? (
@@ -63,7 +90,7 @@ export default async function MePage() {
             {notifications.map((notification) => (
               <li key={notification.id} className="border-l-2 border-gold-500 pl-3">
                 <p className="text-xs text-slate-500">{dateFormat.format(notification.createdAt)}</p>
-                <p>{(notification.payload as { message?: string } | null)?.message}</p>
+                <p className="whitespace-pre-wrap">{(notification.payload as { message?: string } | null)?.message}</p>
               </li>
             ))}
           </ul>

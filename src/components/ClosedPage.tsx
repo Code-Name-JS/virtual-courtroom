@@ -1,6 +1,7 @@
 import { SIDE_LABELS } from "@/domain/case";
 import { OUTCOME_LABELS, SENTENCE_LABELS, persuasion } from "@/domain/trial";
 import { db } from "@/server/db";
+import { env } from "@/server/env";
 import { CASE_ID } from "@/server/lifecycle";
 
 const dateFormat = new Intl.DateTimeFormat("ko-KR", { dateStyle: "long", timeZone: "Asia/Seoul" });
@@ -44,6 +45,14 @@ export async function ClosedPage() {
 
         <div className="space-y-2 text-xs text-slate-400">
           <p>회원 정보와 작성한 글은 사이트 폐쇄와 함께 모두 파기되었습니다.</p>
+          {env.operatorContactEmail && (
+            <p>
+              운영자 연락처:{" "}
+              <a href={`mailto:${env.operatorContactEmail}`} className="underline hover:text-white">
+                {env.operatorContactEmail}
+              </a>
+            </p>
+          )}
           <p>이 사건은 AI가 만든 허구의 사건이며, 실존 인물이나 사건과 관계가 없습니다.</p>
           <p>
             Virtual Courtroom은 사이트 하나가 사건 하나만 다루고 끝나는 단기 프로젝트입니다. ·{" "}

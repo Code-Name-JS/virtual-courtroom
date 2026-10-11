@@ -9,6 +9,8 @@ export function SiteFooter() {
           <Link href="/about" className="hover:text-white">서비스 소개</Link>
           <Link href="/terms" className="hover:text-white">이용약관</Link>
           <Link href="/privacy" className="font-semibold hover:text-white">개인정보처리방침</Link>
+          <Link href="/about/faq" className="hover:text-white">자주 묻는 질문</Link>
+          <Link href="/contact" className="hover:text-white">문의하기</Link>
         </p>
         <p>
           Virtual Courtroom · MIT License ·{" "}

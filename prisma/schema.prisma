@@ -182,6 +182,21 @@ enum ApplicationStatus {
   rejected
 }
 
+// 03 L-03 문의하기 (M8)
+enum InquiryCategory {
+  account
+  case_progress
+  privacy
+  copyright
+  bug
+  other
+}
+
+enum InquiryStatus {
+  open
+  answered
+}
+
 // ─── 1. 회원과 사이트 ────────────────────────────────────
 
 model User {
@@ -216,6 +231,8 @@ model User {
   reviewComments      ReviewComment[]
   appealApplication   AppealApplication?
   notifications       Notification[]
+  inquiries           Inquiry[]           @relation("InquiryAuthor")
+  answeredInquiries   Inquiry[]           @relation("InquiryAnswerer")
   notices             Notice[]
   caseEvents          CaseEvent[]
 
@@ -761,4 +778,24 @@ model Notification {
   @@index([userId, createdAt])
   @@index([sendEmail, emailedAt])
   @@map("notification")
+}
+
+// 03 L-03 문의하기 (M8). 회원이 남긴 문의와 운영자의 답변. 답변은 알림과 이메일로 전달
+model Inquiry {
+  id         String          @id @default(uuid())
+  userId     String          @map("user_id")
+  category   InquiryCategory
+  body       String
+  status     InquiryStatus   @default(open)
+  answer     String?
+  answeredBy String?         @map("answered_by")
+  answeredAt DateTime?       @map("answered_at")
+  createdAt  DateTime        @default(now()) @map("created_at")
+
+  user     User  @relation("InquiryAuthor", fields: [userId], references: [id], onDelete: Cascade)
+  answerer User? @relation("InquiryAnswerer", fields: [answeredBy], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
+  @@map("inquiry")
 }

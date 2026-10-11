@@ -52,6 +52,7 @@ export async function purgePersonalData(db: PrismaClient): Promise<PurgeReport> 
     참여: await db.participation.count(),
     게시글: await db.post.count(),
     열람기록: await db.viewLog.count(),
+    문의: await db.inquiry.count(),
     알림: await db.notification.count(),
   };
   await db.$transaction(async (tx) => {
@@ -62,7 +63,7 @@ export async function purgePersonalData(db: PrismaClient): Promise<PurgeReport> 
     await tx.stageSchedule.deleteMany();
     await tx.leakDetection.deleteMany();
     await tx.rateLimitEvent.deleteMany();
-    // 회원을 지우면 세션, IP, 인증 코드, 참여, 투표, 글, 열람 기록, 신고, 제재, 알림이 함께 지워짐 (스키마의 onDelete: Cascade)
+    // 회원을 지우면 세션, IP, 인증 코드, 참여, 투표, 글, 열람 기록, 신고, 제재, 문의, 알림이 함께 지워짐 (스키마의 onDelete: Cascade)
     await tx.user.deleteMany();
     await tx.judgment.updateMany({ data: { pronouncedBy: "파기됨" } });
     await tx.case.updateMany({ data: { body: "", aiOriginalBody: "", reviewNote: null, reviewChecklist: Prisma.DbNull } });

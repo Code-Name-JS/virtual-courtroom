@@ -9,6 +9,7 @@ const SUBJECTS: Record<string, string> = {
   appeal_opened: "[Virtual Courtroom] 2심이 열렸습니다",
   appeal_application_approved: "[Virtual Courtroom] 2심 추가 배심원으로 승인되었습니다",
   closure_announced: "[Virtual Courtroom] 사이트 폐쇄 안내",
+  inquiry_answered: "[Virtual Courtroom] 문의에 답변이 도착했습니다",
 };
 
 const BATCH_SIZE = 50;

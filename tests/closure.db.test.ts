@@ -38,6 +38,7 @@ describe.skipIf(!url)("사이트 폐쇄와 개인정보 파기 (DB 통합 테스
     const imageKey = await saveUpload(Buffer.from("image"), "png");
     await db.evidence.create({ data: { postId: post.id, type: "image", urlOrFileKey: imageKey, sourceNote: "" } });
     await db.leakDetection.create({ data: { type: "abnormal_view", suspectUserId: juror.id, score: 70, detail: { pageViews: 70 } } });
+    await db.inquiry.create({ data: { userId: juror.id, category: "other", body: "문의", status: "answered", answer: "답변", answeredBy: operator.id } });
     await db.verdictBallot.create({ data: { round: 1, choice: "guilty" } });
     await db.rateLimitEvent.create({ data: { key: "signup:h" } });
     await db.judgment.create({
@@ -82,6 +83,7 @@ describe.skipIf(!url)("사이트 폐쇄와 개인정보 파기 (DB 통합 테스
       db.rateLimitEvent.count(),
       db.evidence.count(),
       db.leakDetection.count(),
+      db.inquiry.count(),
     ]);
     expect(counts.every((c) => c === 0)).toBe(true);
     // 증거 이미지 파일도 파기

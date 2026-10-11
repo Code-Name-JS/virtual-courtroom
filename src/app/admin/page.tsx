@@ -5,6 +5,7 @@ import { requireOperator } from "@/server/auth";
 import { getCase } from "@/server/case-service";
 import { listPendingAppeals, listReports } from "@/server/sanction-service";
 import { db } from "@/server/db";
+import { countOpenInquiries } from "@/server/inquiry";
 import { countOpenDetections } from "@/server/leak-detection";
 import { advanceDueStages } from "@/server/lifecycle";
 
@@ -23,13 +24,14 @@ export default async function AdminPage() {
   await requireOperator();
   // 워커가 없어도 마감이 지난 단계가 넘어가도록 (사건 페이지와 같은 방식)
   await advanceDueStages(db);
-  const [members, verified, current, reports, appeals, detections] = await Promise.all([
+  const [members, verified, current, reports, appeals, detections, inquiries] = await Promise.all([
     db.user.count(),
     db.user.count({ where: { emailVerifiedAt: { not: null } } }),
     getCase(),
     listReports(),
     listPendingAppeals(),
     countOpenDetections(db),
+    countOpenInquiries(db),
   ]);
   const ended = current?.status === "DISMISSED" || current?.status === "FINALIZED";
   const todo =
@@ -69,6 +71,9 @@ export default async function AdminPage() {
           </Link>
           <Link href="/admin/members" className="inline-block rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
             회원 관리
+          </Link>
+          <Link href="/admin/inquiries" className="inline-block rounded border border-slate-300 px-4 py-2 text-sm font-semibold hover:bg-slate-100">
+            문의 (답할 문의 {inquiries}건)
           </Link>
         </div>
       </section>

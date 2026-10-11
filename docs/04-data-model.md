@@ -382,6 +382,9 @@ erDiagram
 |---|---|---|
 | `notice` | `id`, `title`, `body`, `author_user_id`, `is_pinned`, `published_at` | 운영자 결정 공지, 폐쇄 일시 공지 등 |
 | `notification` | `id`, `user_id`, `type`, `payload` (json), `link`, `read_at`, `created_at` | 03 [알림](./03-information-architecture.md#알림) 표의 항목 |
+| `inquiry` | `id`, `user_id`, `category` (`account` 계정·IP / `case_progress` 사건·진행 / `privacy` 개인정보 요청 / `copyright` 저작권 신고 / `bug` 오류 / `other` 기타), `body`, `status` (`open` / `answered`), `answer`, `answered_by`, `answered_at`, `created_at` | (M8) 03 L-03 문의하기. 회원의 문의와 운영자의 답변. 답변은 알림(`inquiry_answered`)과 이메일로 전달. 한 문의에는 한 번만 답함 |
+
+배지(03 U-06)는 따로 저장하지 않고 `indictment_vote`, `participation`, `post`, `advocate`, `verdict_receipt`, `review`, `judgment`에서 그때그때 계산합니다 (M8). 그래서 참여 기록을 파기하면 배지도 함께 사라집니다.
 
 ---
 
@@ -467,7 +470,7 @@ M0 구현(`prisma/schema.prisma`)에서 문서의 엔티티 외에 추가한 데
 | **파기** | `ip_binding`, `ip_change_log`, `email_verification`, `guardian_consent`, `session`, `rate_limit_event`, IP 해시용 비밀 키 | IP, 인증, 세션, 법정대리인 정보 |
 | **파기** | `post`, `post_revision`, `evidence`, `final_argument`, `review`, `review_comment`, 증거 이미지 파일 | 회원이 쓴 글과 올린 이미지 |
 | **파기** | `view_log`, `report`, `leak_detection`, `sanction`, `sanction_appeal` | 열람 기록과 제재 기록 |
-| **파기** | `appeal_application`, `advocate_nomination`, `advocate`, `notification` | |
+| **파기** | `appeal_application`, `advocate_nomination`, `advocate`, `notification`, `inquiry` | 문의 내용과 답변 포함 |
 | **파기** | `verdict_ballot`, `stage_schedule`, `case_event`, `notice` | 개인정보는 없지만 종료 안내 페이지에 필요 없음 |
 
 `closure_summary`를 쓸 때 닉네임이나 글 내용을 옮겨 적지 않도록 주의합니다.

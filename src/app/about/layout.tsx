@@ -4,9 +4,10 @@ const TABS = [
   { href: "/about", label: "프로젝트 소개" },
   { href: "/about/process", label: "재판 진행 과정" },
   { href: "/about/guide", label: "참여 가이드" },
+  { href: "/about/faq", label: "자주 묻는 질문" },
 ];
 
-// 03 서비스 소개 (A-01 ~ A-03). FAQ(A-04)는 2차
+// 03 서비스 소개 (A-01 ~ A-04)
 export default function AboutLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-10">

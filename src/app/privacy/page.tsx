@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LegalPage, operatorLabel } from "@/components/LegalPage";
 import { env } from "@/server/env";
 
@@ -15,6 +16,7 @@ const ITEMS = [
   ["열람 기록 · 워터마크 코드", "정보 유출 확인 (워터마크 확인, 짧은 시간의 대량 열람 탐지)", "사이트 폐쇄까지"],
   ["작성한 글, 투표·참여 기록, 신고·제재 기록, 자동 탐지 결과", "서비스 제공, 제재 (상대 측 글과 많이 겹치는 글 탐지 포함)", "사이트 폐쇄까지"],
   ["증거자료로 올린 이미지", "게시판 증거자료. 올릴 때 촬영 위치 등 사진 속 정보(EXIF)를 지움", "사이트 폐쇄까지"],
+  ["문의 내용과 답변", "문의 응대", "사이트 폐쇄까지"],
 ] as const;
 
 // 03 L-02 개인정보처리방침 (05 개인정보처리방침에 반드시 적을 내용을 바탕으로 한 기본 템플릿)
@@ -59,7 +61,13 @@ export default function PrivacyPage() {
       </section>
       <section>
         <h2>4. 회원의 권리</h2>
-        <p>회원은 자신의 개인정보를 열람, 정정, 삭제하거나 처리를 멈춰 달라고 요청할 수 있습니다. 아래 연락처로 요청해 주세요.</p>
+        <p>
+          회원은 자신의 개인정보를 열람, 정정, 삭제하거나 처리를 멈춰 달라고 요청할 수 있습니다. 아래 연락처나{" "}
+          <Link href="/contact" className="underline">
+            문의하기
+          </Link>
+          (개인정보 요청)로 요청해 주세요.
+        </p>
       </section>
       <section>
         <h2>5. 만 14세 미만</h2>
